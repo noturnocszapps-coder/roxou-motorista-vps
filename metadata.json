@@ -1,0 +1,6 @@
+{
+  "name": "Reserva Roxou",
+  "description": "Sistema privado e premium de reservas de motorista particular com cálculo automático e chat integrado.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
