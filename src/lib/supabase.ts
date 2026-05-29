@@ -181,10 +181,17 @@ export const supabaseService = {
       return { error: null };
     }
     
+    // Obter redirecionamento adequado para Google OAuth
+    const isProd = typeof window !== 'undefined' && window.location.hostname === 'reserva.roxou.com.br';
+    const isLocal = typeof window !== 'undefined' && window.location.hostname === 'localhost';
+    const redirectTo = isProd 
+      ? 'https://reserva.roxou.com.br' 
+      : (isLocal ? 'http://localhost:5173' : (typeof window !== 'undefined' ? window.location.origin : ''));
+
     const { data, error } = await supabase!.auth.signInWithOAuth({
       provider: 'google',
       options: {
-        redirectTo: window.location.origin
+        redirectTo: redirectTo
       }
     });
     return { error };
