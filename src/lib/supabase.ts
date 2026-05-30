@@ -168,6 +168,63 @@ if (isDemoMode) {
   initMockDB();
 }
 
+// Auxiliar para mapear linhas do banco de dados de volta para a interface RideRequest do front-end
+function mapDbToRideRequest(db: any): RideRequest {
+  if (!db) return null as any;
+  
+  // Extrair data (scheduled_date) e hora (scheduled_time) a partir de scheduled_at
+  let scheduled_date = '';
+  let scheduled_time = '';
+  
+  if (db.scheduled_at) {
+    try {
+      const parts = db.scheduled_at.split('T');
+      if (parts.length >= 2) {
+        scheduled_date = parts[0];
+        scheduled_time = parts[1].substring(0, 5);
+      } else {
+        scheduled_date = db.scheduled_at;
+        scheduled_time = '12:00';
+      }
+    } catch (e) {
+      console.warn('Erro ao mapear scheduled_at:', e);
+      scheduled_date = db.scheduled_at;
+      scheduled_time = '12:00';
+    }
+  } else if (db.scheduled_date) {
+    scheduled_date = db.scheduled_date;
+    scheduled_time = db.scheduled_time || '12:00';
+  }
+
+  return {
+    id: db.id,
+    user_id: db.passenger_id || db.user_id || '',
+    origin: db.origin,
+    destination: db.destination,
+    scheduled_date,
+    scheduled_time,
+    distance_km: db.distance_km ? Number(db.distance_km) : 0,
+    trip_type: db.trip_type,
+    passenger_count: db.passengers || db.passenger_count || 1,
+    observation: db.notes || db.observation || null,
+    estimated_price: db.estimated_price ? Number(db.estimated_price) : 0,
+    final_price: db.final_price !== null && db.final_price !== undefined ? Number(db.final_price) : null,
+    status: db.status,
+    rejection_reason: db.rejection_reason || null,
+    created_at: db.created_at,
+    updated_at: db.updated_at,
+    profiles: db.profiles ? {
+      id: db.profiles.id,
+      email: db.profiles.email,
+      full_name: db.profiles.full_name || db.profiles.name || 'Passageiro',
+      avatar_url: db.profiles.avatar_url || null,
+      role: db.profiles.role,
+      created_at: db.profiles.created_at || '',
+      updated_at: db.profiles.updated_at || ''
+    } : undefined
+  };
+}
+
 // ==========================================
 // SERVIÇO DE SUPABASE UNIFICADO
 // Cobre tanto o modo Demo local quanto a API real do Supabase
@@ -368,17 +425,29 @@ export const supabaseService = {
       return JSON.parse(localStorage.getItem(KEY_STATUS) || '{"id": 1, "status": "offline"}');
     }
 
-    const { data, error } = await supabase!
-      .from('driver_status')
-      .select('*')
-      .eq('id', 1)
-      .single();
+    try {
+      const { data, error } = await supabase!
+        .from('driver_status')
+        .select('*')
+        .order('updated_at', { ascending: false })
+        .limit(1)
+        .maybeSingle();
 
-    if (error || !data) {
-      // Caso não inicializado por algum motivo, retorna offline padrão
+      if (error || !data) {
+        return { id: 1, status: 'offline', updated_at: new Date().toISOString(), updated_by: null };
+      }
+      const raw = data as any;
+      return {
+        id: raw.id,
+        driver_id: raw.driver_id,
+        status: raw.status,
+        updated_at: raw.updated_at,
+        updated_by: raw.driver_id || null
+      };
+    } catch (err) {
+      console.error('Erro ao buscar status do motorista real:', err);
       return { id: 1, status: 'offline', updated_at: new Date().toISOString(), updated_by: null };
     }
-    return data as DriverStatus;
   },
 
   async updateDriverStatus(status: DriverStatusType, adminUserId: string): Promise<boolean> {
@@ -391,11 +460,32 @@ export const supabaseService = {
       return true;
     }
 
-    const { error } = await supabase!
-      .from('driver_status')
-      .upsert({ id: 1, status, updated_at, updated_by: adminUserId });
+    try {
+      // Buscar se já existe registro com aquele driverId
+      const { data: existing } = await supabase!
+        .from('driver_status')
+        .select('id')
+        .eq('driver_id', adminUserId)
+        .maybeSingle();
 
-    return !error;
+      let query;
+      if (existing) {
+        query = supabase!
+          .from('driver_status')
+          .update({ status, updated_at })
+          .eq('driver_id', adminUserId);
+      } else {
+        query = supabase!
+          .from('driver_status')
+          .insert({ driver_id: adminUserId, status, updated_at });
+      }
+
+      const { error } = await query;
+      return !error;
+    } catch (err) {
+      console.error('Erro ao atualizar driver status:', err);
+      return false;
+    }
   },
 
   subscribeToDriverStatus(callback: (status: DriverStatus) => void) {
@@ -408,9 +498,18 @@ export const supabaseService = {
       .channel('driver_status_realtime')
       .on(
         'postgres_changes',
-        { event: '*', schema: 'public', table: 'driver_status', filter: 'id=eq.1' },
+        { event: '*', schema: 'public', table: 'driver_status' },
         (payload) => {
-          callback(payload.new as DriverStatus);
+          if (payload.new) {
+            const rawNew = payload.new as any;
+            callback({
+              id: rawNew.id,
+              driver_id: rawNew.driver_id,
+              status: rawNew.status,
+              updated_at: rawNew.updated_at,
+              updated_by: rawNew.driver_id || null
+            });
+          }
         }
       )
       .subscribe();
@@ -460,17 +559,39 @@ export const supabaseService = {
       return newRide;
     }
 
-    const { data: inserted, error } = await supabase!
-      .from('ride_requests')
-      .insert(newRide)
-      .select()
-      .single();
+    try {
+      // Mapear campos para colunas reais no banco
+      const dbRide = {
+        passenger_id: data.user_id,
+        origin: data.origin,
+        destination: data.destination,
+        scheduled_at: `${data.scheduled_date}T${data.scheduled_time}:00Z`,
+        distance_km: Number(data.distance_km),
+        trip_type: data.trip_type,
+        passengers: Number(data.passenger_count),
+        notes: data.observation,
+        estimated_price: Number(data.estimated_price),
+        status: 'pendente',
+        final_price: null,
+        rejection_reason: null,
+        payment_confirmed: false
+      };
 
-    if (error) {
-      console.error('Erro ao salvar reserva', error);
+      const { data: inserted, error } = await supabase!
+        .from('ride_requests')
+        .insert(dbRide)
+        .select()
+        .maybeSingle();
+
+      if (error || !inserted) {
+        console.error('Erro ao salvar reserva', error);
+        return null;
+      }
+      return mapDbToRideRequest(inserted);
+    } catch (err) {
+      console.error('Exceção ao criar solicitação de reserva:', err);
       return null;
     }
-    return inserted as RideRequest;
   },
 
   async getRideRequests(userRole: 'admin' | 'passageiro', userId: string): Promise<RideRequest[]> {
@@ -493,20 +614,26 @@ export const supabaseService = {
       }
     }
 
-    let query = supabase!
-      .from('ride_requests')
-      .select('*, profiles:user_id(*)');
+    try {
+      // Usar joion em profiles utilizando a relação de passenger_id para evitar incompatibilidades
+      let query = supabase!
+        .from('ride_requests')
+        .select('*, profiles:passenger_id(*)');
 
-    if (userRole !== 'admin') {
-      query = query.eq('user_id', userId);
-    }
+      if (userRole !== 'admin') {
+        query = query.eq('passenger_id', userId);
+      }
 
-    const { data, error } = await query.order('created_at', { ascending: false });
-    if (error) {
-      console.error('Erro ao buscar reservas reais', error);
+      const { data, error } = await query.order('created_at', { ascending: false });
+      if (error) {
+        console.error('Erro ao buscar reservas reais', error);
+        return [];
+      }
+      return (data || []).map(row => mapDbToRideRequest(row));
+    } catch (err) {
+      console.error('Exceção ao buscar solicitações de reservas:', err);
       return [];
     }
-    return data as RideRequest[];
   },
 
   async getRideRequestById(id: string): Promise<RideRequest | null> {
@@ -520,17 +647,22 @@ export const supabaseService = {
       return ride;
     }
 
-    const { data, error } = await supabase!
-      .from('ride_requests')
-      .select('*, profiles:user_id(*)')
-      .eq('id', id)
-      .single();
+    try {
+      const { data, error } = await supabase!
+        .from('ride_requests')
+        .select('*, profiles:passenger_id(*)')
+        .eq('id', id)
+        .maybeSingle();
 
-    if (error) {
-      console.error('Erro ao buscar reserva por ID real', error);
+      if (error || !data) {
+        console.error('Erro ao buscar reserva por ID real', error);
+        return null;
+      }
+      return mapDbToRideRequest(data);
+    } catch (err) {
+      console.error('Exceção ao buscar reserva por ID:', err);
       return null;
     }
-    return data as RideRequest;
   },
 
   async updateRideRequest(
@@ -560,17 +692,29 @@ export const supabaseService = {
       return false;
     }
 
-    const { error } = await supabase!
-      .from('ride_requests')
-      .update({
+    try {
+      const updatePayload: any = {
         status: updates.status,
-        final_price: updates.final_price !== undefined ? updates.final_price : undefined,
-        rejection_reason: updates.rejection_reason !== undefined ? updates.rejection_reason : undefined,
         updated_at: now
-      })
-      .eq('id', id);
+      };
 
-    return !error;
+      if (updates.final_price !== undefined) {
+        updatePayload.final_price = updates.final_price;
+      }
+      if (updates.rejection_reason !== undefined) {
+        updatePayload.rejection_reason = updates.rejection_reason;
+      }
+
+      const { error } = await supabase!
+        .from('ride_requests')
+        .update(updatePayload)
+        .eq('id', id);
+
+      return !error;
+    } catch (err) {
+      console.error('Exceção ao atualizar status da reserva:', err);
+      return false;
+    }
   },
 
   subscribeToRideRequest(id: string, callback: (ride: RideRequest) => void) {

@@ -18,10 +18,11 @@ export interface Profile {
 export type DriverStatusType = 'online' | 'ocupado' | 'offline';
 
 export interface DriverStatus {
-  id: number;
+  id: number | string;
+  driver_id?: string | null;
   status: DriverStatusType;
   updated_at: string;
-  updated_by: string | null;
+  updated_by?: string | null;
 }
 
 export type RideStatus =
