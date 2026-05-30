@@ -90,6 +90,36 @@ export function AdminDashboardView({ currentUser, onRefreshUser }: AdminProps) {
   // Calcular lucros estimados concluídos
   const totalConcludedEarnings = concludedTrips.reduce((acc, r) => acc + (r.final_price || r.estimated_price), 0);
 
+  // Obter o mês atual e ano para cálculo da receita mensal
+  const now = new Date();
+  const currentMonthKey = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+  const monthNames = [
+    'Janeiro', 'Fevereiro', 'Março', 'Abril', 'Maio', 'Junho',
+    'Julho', 'Agosto', 'Setembro', 'Outubro', 'Novembro', 'Dezembro'
+  ];
+  const currentMonthName = monthNames[now.getMonth()];
+
+  // Filtrar viagens concluídas no mês atual
+  const monthlyConcludedTrips = concludedTrips.filter(r => {
+    return r.scheduled_date && r.scheduled_date.startsWith(currentMonthKey);
+  });
+  const totalMonthlyEarnings = monthlyConcludedTrips.reduce((acc, r) => acc + (r.final_price || r.estimated_price), 0);
+
+  // Ticket médio de viagens concluídas
+  const averageTicket = concludedTrips.length > 0 
+    ? totalConcludedEarnings / concludedTrips.length 
+    : 0;
+
+  // Filtrar as principais reservas de mais alto valor (excluindo as canceladas) de forma decrescente
+  const highValueBookings = [...rides]
+    .filter(r => r.status !== 'cancelado' && r.status !== 'recusado')
+    .sort((a, b) => {
+      const valA = a.final_price || a.estimated_price || 0;
+      const valB = b.final_price || b.estimated_price || 0;
+      return valB - valA;
+    })
+    .slice(0, 4);
+
   return (
     <div className="w-full max-w-sm mx-auto px-4 py-4 md:py-6 page-transition space-y-6 pb-12">
       {/* Header do Admin */}
@@ -106,7 +136,7 @@ export function AdminDashboardView({ currentUser, onRefreshUser }: AdminProps) {
 
         <button
           onClick={() => navigate('/')}
-          className="text-xs bg-roxou-card border border-slate-800 hover:bg-slate-900 rounded-xl px-3 py-1.5 text-slate-400 font-semibold cursor-pointer"
+          className="text-xs bg-roxou-card border border-slate-880 hover:bg-slate-900 rounded-xl px-3 py-1.5 text-slate-400 font-semibold cursor-pointer"
         >
           Visão Cliente
         </button>
@@ -187,14 +217,14 @@ export function AdminDashboardView({ currentUser, onRefreshUser }: AdminProps) {
         </div>
       </div>
 
-      {/* Cards de Métricas */}
+      {/* Cards de Métricas de Finanças e Atividade */}
       <div className="grid grid-cols-2 gap-3.5">
         <div className="bg-roxou-card border border-slate-850/60 p-4 rounded-xl text-left">
           <div className="flex justify-between items-start">
             <span className="text-[10px] text-slate-500 font-bold uppercase tracking-wider leading-none">Ganhos Gerais</span>
             <TrendingUp className="w-3.5 h-3.5 text-roxou-neon" />
           </div>
-          <p className="text-lg font-bold font-display text-slate-100 mt-2 truncate">
+          <p className="text-base font-bold font-display text-slate-100 mt-2 truncate">
             {new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(totalConcludedEarnings)}
           </p>
           <span className="text-[9px] text-slate-500 font-medium">{concludedTrips.length} viagens finalizadas</span>
@@ -202,12 +232,118 @@ export function AdminDashboardView({ currentUser, onRefreshUser }: AdminProps) {
 
         <div className="bg-roxou-card border border-slate-850/60 p-4 rounded-xl text-left">
           <div className="flex justify-between items-start">
+            <span className="text-[10px] text-slate-500 font-bold uppercase tracking-wider leading-none">Receita {currentMonthName}</span>
+            <span className="text-roxou-neon font-bold text-[10px]">&bull; {monthlyConcludedTrips.length}</span>
+          </div>
+          <p className="text-base font-bold font-display text-slate-100 mt-2 truncate">
+            {new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(totalMonthlyEarnings)}
+          </p>
+          <span className="text-[9px] text-emerald-400 font-medium">Rec. Mensal Concluída</span>
+        </div>
+
+        <div className="bg-roxou-card border border-slate-850/60 p-4 rounded-xl text-left">
+          <div className="flex justify-between items-start">
             <span className="text-[10px] text-slate-500 font-bold uppercase tracking-wider leading-none">Status Ativos</span>
             <Car className="w-3.5 h-3.5 text-purple-400 animate-pulse" />
           </div>
-          <p className="text-lg font-bold font-display text-slate-100 mt-2">{activeTripsCount}</p>
-          <span className="text-[9px] text-purple-400 font-medium">agendadas ou em voo</span>
+          <p className="text-base font-bold font-display text-slate-100 mt-2">{activeTripsCount}</p>
+          <span className="text-[9px] text-purple-400 font-medium">Em andamento ou confirmadas</span>
         </div>
+
+        <div className="bg-roxou-card border border-slate-850/60 p-4 rounded-xl text-left">
+          <div className="flex justify-between items-start">
+            <span className="text-[10px] text-slate-500 font-bold uppercase tracking-wider leading-none">Ticket Médio</span>
+            <span className="text-[9px] font-mono font-bold text-amber-500">R$</span>
+          </div>
+          <p className="text-base font-bold font-display text-slate-100 mt-2 truncate">
+            {new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(averageTicket)}
+          </p>
+          <span className="text-[9px] text-slate-500 font-medium">Média p/ viagem concluída</span>
+        </div>
+      </div>
+
+      {/* Reservas de Alto Valor */}
+      <div className="space-y-3">
+        <div className="flex items-center gap-1.5 font-display font-bold text-sm text-slate-205 text-left">
+          <span className="text-amber-500">💎</span>
+          <span>Reservas de Destaque (Alto Valor)</span>
+        </div>
+
+        {loading ? (
+          <div className="h-24 flex items-center justify-center">
+            <Loader2 className="w-5 h-5 animate-spin text-roxou-purple" />
+          </div>
+        ) : highValueBookings.length === 0 ? (
+          <div className="bg-roxou-card border border-slate-850 p-6 rounded-2xl text-center text-slate-500 text-[11px] leading-normal">
+            Nenhuma reserva relevante cadastrada ainda.
+          </div>
+        ) : (
+          <div className="space-y-2.5">
+            {highValueBookings.map(ride => {
+              const price = ride.final_price || ride.estimated_price;
+              const formattedPrice = new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(price);
+              
+              const formatDateShort = (dateStr: string) => {
+                if (!dateStr) return '';
+                const parts = dateStr.split('-');
+                if (parts.length === 3) {
+                  return `${parts[2]}/${parts[1]}`;
+                }
+                return dateStr;
+              };
+
+              // Mapeamento menor de status
+              let statusText = 'Novo Orç.';
+              let statusColor = 'text-yellow-405 border-yellow-500/10 bg-yellow-500/5';
+              if (ride.status === 'concluido') {
+                statusText = 'Concluída';
+                statusColor = 'text-slate-400 border-slate-800 bg-slate-850/50';
+              } else if (ride.status === 'confirmado_reserva') {
+                statusText = 'Reservada';
+                statusColor = 'text-emerald-400 border-emerald-500/10 bg-emerald-500/5';
+              } else if (ride.status === 'em_viagem') {
+                statusText = 'Em Viagem';
+                statusColor = 'text-purple-400 border-purple-500/10 bg-purple-500/5';
+              } else if (ride.status === 'aprovado' || ride.status === 'confirmado_pagamento') {
+                statusText = 'Orç. Aprov.';
+                statusColor = 'text-indigo-400 border-indigo-500/10 bg-indigo-500/5';
+              }
+
+              return (
+                <div
+                  key={ride.id}
+                  onClick={() => navigate(`/reserva/${ride.id}`)}
+                  className="bg-roxou-card group hover:bg-roxou-card-hover border border-slate-850 hover:border-slate-800 p-3.5 rounded-xl flex items-center justify-between transition-all duration-200 cursor-pointer text-left"
+                >
+                  <div className="flex flex-col min-w-0 pr-2">
+                    <div className="flex items-center gap-1.5">
+                      <span className="font-mono text-[9px] text-slate-500 tracking-wide uppercase">
+                        #{ride.id.split('-')[0].toUpperCase()}
+                      </span>
+                      <span className="text-[9px] text-slate-400">•</span>
+                      <span className="text-[10px] text-slate-400 font-semibold flex items-center gap-1">
+                        <Calendar className="w-2.5 h-2.5 text-slate-500" />
+                        {formatDateShort(ride.scheduled_date)} {ride.scheduled_time}
+                      </span>
+                    </div>
+                    <p className="text-xs text-slate-205 font-medium truncate mt-1">
+                      {ride.origin.split(',')[0]} &rarr; {ride.destination.split(',')[0]}
+                    </p>
+                  </div>
+                  
+                  <div className="text-right flex-shrink-0 flex flex-col items-end gap-1.5">
+                    <span className="font-display font-black text-xs text-roxou-neon">
+                      {formattedPrice}
+                    </span>
+                    <span className={`text-[8px] font-bold ${statusColor} px-1.5 py-0.5 rounded border`}>
+                      {statusText}
+                    </span>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
       </div>
 
       {/* Lista de Ações Requeridas */}

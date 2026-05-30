@@ -94,12 +94,12 @@ export default function App() {
   }
 
   // Se o usuário tentar acessar qualquer rota deslogado, forçar exibição do login
-  if (!currentUser) {
+  if (!currentUser || currentPath === '/login') {
     return (
-      <div className="w-full min-h-screen bg-[#08070d] flex items-center justify-center">
-        <div className="w-full max-w-md bg-roxou-bg min-h-screen md:min-h-[92vh] md:my-4 md:rounded-[32px] md:border md:border-slate-850 md:shadow-2xl overflow-hidden flex flex-col justify-between">
-          <DemoHeader currentUser={null} onRefreshUser={refreshUserData} />
-          <LoginView currentUser={null} onRefreshUser={refreshUserData} />
+      <div className="w-full min-h-screen bg-[#08070d] flex flex-col justify-start">
+        <DemoHeader currentUser={currentUser} onRefreshUser={refreshUserData} />
+        <div className="flex-grow w-full flex items-center justify-center">
+          <LoginView currentUser={currentUser} onRefreshUser={refreshUserData} />
         </div>
       </div>
     );
