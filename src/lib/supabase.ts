@@ -227,28 +227,43 @@ export const supabaseService = {
       const { data: { user } } = await supabase!.auth.getUser();
       if (!user) return null;
 
-      // Buscar perfil correspondente no banco
+      // Buscar perfil correspondente no banco usando maybeSingle() para evitar erro de Content Negotiation 406
       const { data: profile, error } = await supabase!
         .from('profiles')
         .select('*')
         .eq('id', user.id)
-        .single();
+        .maybeSingle();
 
-      if (error || !profile) {
-        // Adicionar política fallback para upsertar o perfil se não existir no banco de dados local da pessoa
-        const newProfile: Partial<Profile> = {
+      if (error) {
+        console.warn('Erro ao buscar perfil com maybeSingle:', error);
+      }
+
+      if (!profile) {
+        const newProfile = {
           id: user.id,
           email: user.email || '',
-          full_name: user.user_metadata?.full_name || user.user_metadata?.name || 'Usuário Google',
+          full_name: user.user_metadata?.full_name || user.user_metadata?.name || 'Passageiro',
           avatar_url: user.user_metadata?.avatar_url || null,
           role: user.email === 'contato.fh3@gmail.com' ? 'admin' : 'passageiro'
         };
 
-        const { data: insertedProfile } = await supabase!
+        // Usa insert em vez de upsert para evitar erros de RLS e triggers de actualização (400 Bad Request)
+        const { data: insertedProfile, error: insertError } = await supabase!
           .from('profiles')
-          .upsert(newProfile)
+          .insert(newProfile)
           .select()
-          .single();
+          .maybeSingle();
+        
+        if (insertError) {
+          console.log('Inserção direta ignorada (possivelmente criada via trigger on_auth_user_created):', insertError);
+          // Recarregar perfil novamente
+          const { data: reloadedProfile } = await supabase!
+            .from('profiles')
+            .select('*')
+            .eq('id', user.id)
+            .maybeSingle();
+          return reloadedProfile as Profile || null;
+        }
         
         return insertedProfile as Profile;
       }
@@ -297,13 +312,9 @@ export const supabaseService = {
     const { data: { subscription } } = supabase!.auth.onAuthStateChange(
       async (event, session) => {
         if (session?.user) {
-          const user = session.user;
-          const { data: profile } = await supabase!
-            .from('profiles')
-            .select('*')
-            .eq('id', user.id)
-            .single();
-          callback(profile as Profile || null);
+          // Utiliza a mesma lógica centralizada e robusta de criação e busca de perfis
+          const profile = await this.getCurrentUser();
+          callback(profile);
         } else {
           callback(null);
         }
