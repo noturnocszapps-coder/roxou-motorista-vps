@@ -223,56 +223,85 @@ export const supabaseService = {
       return JSON.parse(userJSON);
     }
 
-    try {
-      const { data: { user } } = await supabase!.auth.getUser();
-      if (!user) return null;
-
-      // Buscar perfil correspondente no banco usando maybeSingle() para evitar erro de Content Negotiation 406
-      const { data: profile, error } = await supabase!
-        .from('profiles')
-        .select('*')
-        .eq('id', user.id)
-        .maybeSingle();
-
-      if (error) {
-        console.warn('Erro ao buscar perfil com maybeSingle:', error);
-      }
-
-      if (!profile) {
-        const newProfile = {
-          id: user.id,
-          email: user.email || '',
-          full_name: user.user_metadata?.full_name || user.user_metadata?.name || 'Passageiro',
-          avatar_url: user.user_metadata?.avatar_url || null,
-          role: user.email === 'contato.fh3@gmail.com' ? 'admin' : 'passageiro'
-        };
-
-        // Usa insert em vez de upsert para evitar erros de RLS e triggers de actualização (400 Bad Request)
-        const { data: insertedProfile, error: insertError } = await supabase!
-          .from('profiles')
-          .insert(newProfile)
-          .select()
-          .maybeSingle();
-        
-        if (insertError) {
-          console.log('Inserção direta ignorada (possivelmente criada via trigger on_auth_user_created):', insertError);
-          // Recarregar perfil novamente
-          const { data: reloadedProfile } = await supabase!
-            .from('profiles')
-            .select('*')
-            .eq('id', user.id)
-            .maybeSingle();
-          return reloadedProfile as Profile || null;
+    const fetchUserPromise = async (): Promise<Profile | null> => {
+      try {
+        console.log('[AUTH] start getCurrentUser fetch');
+        if (!supabase) {
+          console.warn('[AUTH] supabase client not initialized');
+          return null;
         }
-        
-        return insertedProfile as Profile;
-      }
+        const { data: { user }, error: userError } = await supabase.auth.getUser();
+        if (userError || !user) {
+          console.log('[AUTH] user not logged in or error:', userError);
+          return null;
+        }
+        console.log('[AUTH] session loaded for user:', user.email);
 
-      return profile as Profile;
-    } catch (e) {
-      console.error('Erro ao verificar usuário real do Supabase', e);
-      return null;
-    }
+        // Buscar perfil correspondente no banco usando maybeSingle() para evitar erro de Content Negotiation 406
+        const { data: profile, error } = await supabase
+          .from('profiles')
+          .select('*')
+          .eq('id', user.id)
+          .maybeSingle();
+
+        if (error) {
+          console.warn('[AUTH] Erro ao buscar perfil com maybeSingle:', error);
+          console.log('[AUTH] profile failed');
+        }
+
+        if (!profile) {
+          console.log('[AUTH] profile does not exist, creating new profile...');
+          const newProfile = {
+            id: user.id,
+            email: user.email || '',
+            full_name: user.user_metadata?.full_name || user.user_metadata?.name || 'Passageiro',
+            avatar_url: user.user_metadata?.avatar_url || null,
+            role: user.email === 'contato.fh3@gmail.com' ? 'admin' : 'passageiro'
+          };
+
+          // Usa insert em vez de upsert para evitar erros de RLS e triggers de actualização (400 Bad Request)
+          const { data: insertedProfile, error: insertError } = await supabase
+            .from('profiles')
+            .insert(newProfile)
+            .select()
+            .maybeSingle();
+          
+          if (insertError) {
+            console.log('[AUTH] Inserção direta falhou/ignorada:', insertError);
+            // Recarregar perfil novamente
+            const { data: reloadedProfile } = await supabase
+              .from('profiles')
+              .select('*')
+              .eq('id', user.id)
+              .maybeSingle();
+            console.log('[AUTH] profile reloaded after fallback:', reloadedProfile);
+            return reloadedProfile as Profile || null;
+          }
+          
+          console.log('[AUTH] profile loaded (newly created):', insertedProfile);
+          return insertedProfile as Profile;
+        }
+
+        console.log('[AUTH] profile loaded:', profile.email);
+        return profile as Profile;
+      } catch (e) {
+        console.error('[AUTH] erro interno no fetchUserPromise:', e);
+        console.log('[AUTH] profile failed with exception');
+        return null;
+      }
+    };
+
+    // Timeout de segurança de no máximo 5 segundos
+    return Promise.race([
+      fetchUserPromise(),
+      new Promise<Profile | null>((resolve) => {
+        setTimeout(() => {
+          console.warn('[AUTH] timeout de 5 segundos atingido ao buscar usuário do Supabase');
+          console.log('[AUTH] profile failed (timeout)');
+          resolve(null);
+        }, 5000);
+      })
+    ]);
   },
 
   // Simulação para o Painel de Desenvolvimento trocar de usuário rapidamente
@@ -311,11 +340,18 @@ export const supabaseService = {
 
     const { data: { subscription } } = supabase!.auth.onAuthStateChange(
       async (event, session) => {
-        if (session?.user) {
-          // Utiliza a mesma lógica centralizada e robusta de criação e busca de perfis
-          const profile = await this.getCurrentUser();
-          callback(profile);
-        } else {
+        console.log('[AUTH] onAuthStateChange event fired:', event);
+        try {
+          if (session?.user) {
+            const profile = await this.getCurrentUser();
+            callback(profile);
+          } else {
+            console.log('[AUTH] session loaded: null (logged out)');
+            callback(null);
+          }
+        } catch (authError) {
+          console.error('[AUTH] erro no listener do state change:', authError);
+          console.log('[AUTH] profile failed in subscription callback handler');
           callback(null);
         }
       }

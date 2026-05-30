@@ -28,14 +28,23 @@ export default function App() {
   const [currentUser, setCurrentUser] = useState<Profile | null>(null);
   const [authLoading, setAuthLoading] = useState(true);
 
-  // Carregar e sincronizar usuário logado
+  // Carregar e sincronizar usuário logado com logs temporários e controle robusto de carregamento
   const refreshUserData = async () => {
+    console.log('[AUTH] start');
     try {
       const liveUser = await supabaseService.getCurrentUser();
-      setCurrentUser(liveUser);
+      if (liveUser) {
+        console.log('[AUTH] profile loaded:', liveUser.email);
+        setCurrentUser(liveUser);
+      } else {
+        console.log('[AUTH] profile failed (null/not found)');
+        setCurrentUser(null);
+      }
     } catch (e) {
-      console.error(e);
+      console.error('[AUTH] profile failed with exception during login check:', e);
+      setCurrentUser(null);
     } finally {
+      console.log('[AUTH] loading finished');
       setAuthLoading(false);
     }
   };
@@ -45,7 +54,14 @@ export default function App() {
 
     // Ouvinte para reatividade de login e deslogin
     const unsubscribe = supabaseService.subscribeToAuth((user) => {
-      setCurrentUser(user);
+      console.log('[AUTH] session loaded from subscription event');
+      if (user) {
+        console.log('[AUTH] profile loaded via subscription:', user.email);
+        setCurrentUser(user);
+      } else {
+        console.log('[AUTH] profile failed / session null via subscription');
+        setCurrentUser(null);
+      }
       setAuthLoading(false);
     });
 
