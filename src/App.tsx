@@ -114,9 +114,8 @@ export default function App() {
   };
 
   useEffect(() => {
-    refreshUserData();
-
-    // Ouvinte para reatividade de login e deslogin
+    // Ouvinte único para reatividade de login e deslogin
+    // Evita chamadas de carregamento iniciais duplicadas, mantendo a reatividade
     const unsubscribe = supabaseService.subscribeToAuth((loadedAuthUser, loadedProfile, event) => {
       console.log('[AUTH] session loaded from subscription event:', event);
       if (loadedAuthUser) {
@@ -160,6 +159,14 @@ export default function App() {
       navigate('/login');
     }
   }, [authUser, currentPath, loadingAuth]);
+
+  // Redirecionamento de compatibilidade para rotas de veículos administrativa
+  useEffect(() => {
+    if (currentPath === '/admin/motoristas') {
+      console.log('[COMPATIBILITY REDIRECT]', 'Redirecionando /admin/motoristas para /admin/veiculo');
+      navigate('/admin/veiculo');
+    }
+  }, [currentPath]);
 
   if (loadingAuth) {
     return (
@@ -213,12 +220,7 @@ export default function App() {
     pageContent = <BookingDetailsView rideId={id} currentUser={currentUser} />;
   } else if (
     currentPath === '/admin' ||
-    currentPath === '/admin/solicitacoes' ||
-    currentPath === '/admin/agenda' ||
-    currentPath === '/admin/clientes' ||
-    currentPath === '/admin/motoristas' ||
-    currentPath === '/admin/financeiro' ||
-    currentPath === '/admin/configuracoes'
+    currentPath.startsWith('/admin/')
   ) {
     if (currentUser.role === 'admin') {
       pageContent = <AdminDashboardView currentUser={currentUser} onRefreshUser={refreshUserData} />;

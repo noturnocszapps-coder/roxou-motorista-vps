@@ -68,6 +68,15 @@ export function AdminDashboardView({ currentUser, onRefreshUser }: AdminProps) {
   const [isPricingSaving, setIsPricingSaving] = useState(false);
   const [pricingMessage, setPricingMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
 
+  // Form de Edição de Veículo
+  const [vehicleModelInput, setVehicleModelInput] = useState('');
+  const [vehiclePlateInput, setVehiclePlateInput] = useState('');
+  const [vehiclePhotoUrlInput, setVehiclePhotoUrlInput] = useState('');
+  const [driverStatusInput, setDriverStatusInput] = useState<DriverStatusType>('offline');
+  const [vehicleConsumptionInput, setVehicleConsumptionInput] = useState('');
+  const [isVehicleSaving, setIsVehicleSaving] = useState(false);
+  const [vehicleMessage, setVehicleMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+
   // Relógio em tempo real
   const [currentTime, setCurrentTime] = useState(new Date());
 
@@ -76,11 +85,85 @@ export function AdminDashboardView({ currentUser, onRefreshUser }: AdminProps) {
     return () => clearInterval(timer);
   }, []);
 
+  // Informações do Veículo Ativo
+  const activeDriver = useMemo(() => {
+    if (adminDrivers.length > 0) {
+      return adminDrivers.find(d => d.id === selectedDriverId) || adminDrivers[0];
+    }
+    return null;
+  }, [adminDrivers, selectedDriverId]);
+
+  // Sincronizar inputs do veículo quando mudar de motorista
+  useEffect(() => {
+    if (activeDriver) {
+      setVehicleModelInput(activeDriver.vehicle_model || '');
+      setVehiclePlateInput(activeDriver.vehicle_plate || '');
+      setVehiclePhotoUrlInput(activeDriver.vehicle_photo_url || '');
+      setDriverStatusInput(activeDriver.status || 'offline');
+    } else {
+      setVehicleModelInput('');
+      setVehiclePlateInput('');
+      setVehiclePhotoUrlInput('');
+      setDriverStatusInput('offline');
+    }
+  }, [activeDriver]);
+
+  useEffect(() => {
+    if (pricingSettings) {
+      setVehicleConsumptionInput(pricingSettings.vehicle_consumption_km_l ? String(pricingSettings.vehicle_consumption_km_l) : '');
+    } else {
+      setVehicleConsumptionInput('');
+    }
+  }, [pricingSettings]);
+
+  const handleSaveVehicleConfig = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!selectedDriverId) return;
+    setIsVehicleSaving(true);
+    setVehicleMessage(null);
+    try {
+      // 1. Atualizar drivers
+      const driverSuccess = await supabaseService.updateDriver(selectedDriverId, {
+        vehicle_model: vehicleModelInput,
+        vehicle_plate: vehiclePlateInput,
+        vehicle_photo_url: vehiclePhotoUrlInput,
+        status: driverStatusInput
+      });
+
+      // 2. Atualizar driver_settings (consumo)
+      const settingsSuccess = await supabaseService.updateDriverSettings(selectedDriverId, {
+        vehicle_consumption_km_l: parseFloat(vehicleConsumptionInput) || 10.0
+      });
+
+      if (driverSuccess && settingsSuccess) {
+        setVehicleMessage({ type: 'success', text: 'Veículo e consumo atualizados com sucesso!' });
+        setTimeout(() => setVehicleMessage(null), 4000);
+        
+        // Recarregar os dados do driver na lista
+        const list = await supabaseService.getDrivers();
+        setAdminDrivers(list);
+        
+        // Recarregar as configurações de preço do driver selecionado
+        const settings = await supabaseService.getDriverSettings(selectedDriverId);
+        if (settings) {
+          setPricingSettings(settings);
+        }
+      } else {
+        setVehicleMessage({ type: 'error', text: 'Erro ao salvar algumas informações. Verifique os campos.' });
+      }
+    } catch (err) {
+      console.error('Erro ao atualizar dados do veículo:', err);
+      setVehicleMessage({ type: 'error', text: 'Ocorreu um erro ao salvar as configurações do veículo.' });
+    } finally {
+      setIsVehicleSaving(false);
+    }
+  };
+
   // Mapear rota atual para a aba/seção ativa
   const activeTab = useMemo(() => {
-    if (currentPath === '/admin/solicitacoes') return 'solicitacoes';
-    if (currentPath === '/admin/precificacao') return 'precificacao';
-    if (currentPath === '/admin/motoristas') return 'veiculo';
+    if (currentPath === '/admin/solicitacoes' || currentPath === '/admin/reservas') return 'solicitacoes';
+    if (currentPath === '/admin/precificacao' || currentPath === '/admin/pricing') return 'precificacao';
+    if (currentPath === '/admin/motoristas' || currentPath === '/admin/veiculo') return 'veiculo';
     if (currentPath === '/admin/configuracoes') return 'configuracoes';
     return 'dashboard'; // padrão /admin
   }, [currentPath]);
@@ -401,17 +484,9 @@ export function AdminDashboardView({ currentUser, onRefreshUser }: AdminProps) {
     { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard, path: '/admin' },
     { id: 'solicitacoes', label: 'Central de Reservas', icon: ClipboardList, path: '/admin/solicitacoes', badge: pendentesCount },
     { id: 'precificacao', label: 'Precificação', icon: TrendingUp, path: '/admin/precificacao' },
-    { id: 'veiculo', label: 'Veículo', icon: Car, path: '/admin/motoristas' },
+    { id: 'veiculo', label: 'Veículo', icon: Car, path: '/admin/veiculo' },
     { id: 'configuracoes', label: 'Configurações', icon: Settings, path: '/admin/configuracoes' }
   ];
-
-  // Informações do Veículo Ativo
-  const activeDriver = useMemo(() => {
-    if (adminDrivers.length > 0) {
-      return adminDrivers.find(d => d.id === selectedDriverId) || adminDrivers[0];
-    }
-    return null;
-  }, [adminDrivers, selectedDriverId]);
 
   return (
     <div className="flex-grow w-full flex bg-[#030305] text-slate-150 min-h-[92vh] relative select-none overflow-hidden font-sans">
@@ -1052,70 +1127,237 @@ export function AdminDashboardView({ currentUser, onRefreshUser }: AdminProps) {
                 4) ABA: VEÍCULO (MANDATÓRIO REAIS REGISTROS)
                 ======================================================== */}
             {activeTab === 'veiculo' && (
-              <div className="space-y-6 animate-fade-in text-left">
-                <div>
-                  <h3 className="font-display font-black text-lg text-slate-100">Fichamento do Veículo Titular</h3>
-                  <p className="text-xs text-slate-500 mt-1">Acompanhe as especificações reais de frota e status de presença do motorista logado</p>
-                </div>
-
-                <div className="grid grid-cols-1 xl:grid-cols-12 gap-6 items-start">
-                  
-                  {/* Foto e Card Principal */}
-                  <div className="xl:col-span-8 bg-[#0a0b12] border border-slate-900 rounded-3xl overflow-hidden shadow-lg">
-                    <div className="h-72 w-full bg-slate-950 relative overflow-hidden flex items-center justify-center">
-                      <img
-                        src={(activeDriver?.vehicle_photo_url) || "https://images.unsplash.com/photo-1618843479313-40f8afb4b4d8?auto=format&fit=crop&q=80&w=1200"}
-                        alt={activeDriver?.vehicle_model || 'Veículo Executivo'}
-                        className="w-full h-full object-cover transition-transform duration-700 hover:scale-[1.03]"
-                        referrerPolicy="no-referrer"
-                      />
-                      
-                      <div className="absolute inset-0 bg-gradient-to-t from-slate-950 via-slate-950/30 to-transparent" />
-                      <div className="absolute bottom-5 left-5 right-5 text-left">
-                        <span className="bg-purple-500/10 border border-purple-500/20 text-purple-300 rounded-md px-2.5 py-1 text-[9px] font-mono uppercase font-bold tracking-widest">Frota Prime Roxou</span>
-                        <h4 className="font-display font-black text-2xl text-white mt-1.5">{activeDriver?.vehicle_model || 'Mercedes-Benz Executive C-Class'}</h4>
-                        <p className="text-xs text-slate-400 mt-1">Placa Oficial: <span className="font-mono font-bold text-slate-200">{activeDriver?.vehicle_plate || 'ROX-9988'}</span></p>
-                      </div>
-                    </div>
-
-                    <div className="p-6 grid grid-cols-1 sm:grid-cols-3 gap-6 font-mono text-xs border-t border-slate-900 bg-slate-950/40">
-                      <div>
-                        <p className="text-slate-500 uppercase text-[9px] tracking-wider">CHAUFFEUR DESIGNADO</p>
-                        <p className="text-sm font-bold text-slate-200 mt-1 font-sans">{activeDriver?.display_name || 'Rodriguez Chauffeur'}</p>
-                      </div>
-                      <div>
-                        <p className="text-slate-500 uppercase text-[9px] tracking-wider">CONSUMO CALCULADO</p>
-                        <p className="text-sm font-bold text-emerald-400 mt-1">{(pricingSettings?.vehicle_consumption_km_l) || 10.5} Km / L</p>
-                      </div>
-                      <div>
-                        <p className="text-slate-500 uppercase text-[9px] tracking-wider">STATUS EM TEMPO REAL</p>
-                        <span className={`inline-block px-2.5 py-1 text-[10px] border font-bold uppercase rounded-md mt-1 ${
-                          driverStatus?.status === 'online'
-                            ? 'bg-emerald-500/5 border-emerald-500/20 text-emerald-400'
-                            : driverStatus?.status === 'ocupado'
-                            ? 'bg-amber-500/5 border-amber-500/20 text-amber-400'
-                            : 'bg-slate-900 border-slate-800 text-slate-500'
-                        }`}>
-                          {driverStatus?.status ? driverStatus.status.toUpperCase() : 'OFFLINE'}
-                        </span>
-                      </div>
-                    </div>
+              <div className="grid grid-cols-1 xl:grid-cols-12 gap-6 items-start text-left animate-fade-in font-sans">
+                
+                {/* Lateral Esquerda: Seleção de Motorista */}
+                <div className="xl:col-span-4 bg-[#0a0b12] border border-slate-900 rounded-3xl p-6 space-y-4">
+                  <div>
+                    <h3 className="font-display font-black text-sm text-white">Chauffeurs Disponíveis</h3>
+                    <p className="text-[11px] text-slate-500 mt-0.5">Selecione para acompanhar e atualizar o cadastro do veículo titular correspondente</p>
                   </div>
 
-                  {/* Informações detalhadas de suporte */}
-                  <div className="xl:col-span-4 bg-[#0a0b12] border border-slate-900 rounded-3xl p-6 text-left space-y-4">
-                    <h3 className="font-display font-bold text-sm text-white">Práticas de Segurança</h3>
-                    <p className="text-xs text-slate-400 leading-relaxed">
-                      Todo chauffeur parceiro da plataforma segue regras rigorosas de polidez, trânsito defensivo, atendimento em aeroportos e rotas VIP de escape rápido de trânsito em grandes capitais brasileiras.
-                    </p>
-                    <div className="p-3.5 bg-slate-950 border border-slate-900 rounded-xl space-y-2 text-[10px] text-slate-500 leading-normal">
-                      <p>● Kit Higiene Premium (Água, doces e revistas corporativas)</p>
-                      <p>● GPS Redundante Premium com rotas dinâmicas</p>
-                      <p>● Direção defensiva corporativa dedicada</p>
+                  {adminDrivers.length === 0 ? (
+                    <p className="text-xs text-slate-500 p-2 font-mono">Sem motoristas cadastrados.</p>
+                  ) : (
+                    <div className="flex flex-col gap-2">
+                      {adminDrivers.map(dr => (
+                        <button
+                          key={dr.id}
+                          onClick={() => setSelectedDriverId(dr.id)}
+                          className={`w-full text-left p-3 rounded-xl border flex items-center justify-between transition-all cursor-pointer ${
+                            selectedDriverId === dr.id
+                              ? 'bg-purple-950/20 border-purple-900/60 text-purple-300'
+                              : 'bg-slate-950/40 border-slate-900 hover:border-slate-800 text-slate-400 hover:text-slate-200'
+                          }`}
+                        >
+                          <div className="flex items-center gap-3">
+                            <div className="w-8 h-8 rounded-full bg-slate-900 border border-slate-850 flex items-center justify-center overflow-hidden">
+                              {dr.photo_url ? (
+                                <img src={dr.photo_url} alt={dr.display_name} className="w-full h-full object-cover" referrerPolicy="no-referrer" />
+                              ) : (
+                                <User className="w-4 h-4 text-slate-450" />
+                              )}
+                            </div>
+                            <div>
+                              <p className="text-xs font-bold font-sans">{dr.display_name}</p>
+                              <p className="text-[10px] text-slate-500 font-mono mt-0.5">
+                                {dr.vehicle_model || 'Sem Veículo'}
+                              </p>
+                            </div>
+                          </div>
+                          <ChevronRight className="w-4 h-4 text-slate-600" />
+                        </button>
+                      ))}
                     </div>
-                  </div>
-                  
+                  )}
                 </div>
+
+                {/* Lateral Direita: Card e Formulário */}
+                <div className="xl:col-span-8 space-y-6">
+                  {activeDriver ? (
+                    <>
+                      {/* Visual Card */}
+                      <div className="bg-[#0a0b12] border border-slate-900 rounded-3xl overflow-hidden shadow-lg">
+                        <div className="h-64 w-full bg-slate-950 relative overflow-hidden flex items-center justify-center">
+                          {activeDriver.vehicle_photo_url ? (
+                            <img
+                              src={activeDriver.vehicle_photo_url}
+                              alt={activeDriver.vehicle_model || 'Veículo do Motorista'}
+                              className="w-full h-full object-cover transition-transform duration-700 hover:scale-[1.03]"
+                              referrerPolicy="no-referrer"
+                            />
+                          ) : (
+                            <div className="flex flex-col items-center justify-center text-slate-650 p-8 space-y-2">
+                              <Car className="w-12 h-12 text-slate-800 animate-pulse" />
+                              <span className="text-xs font-semibold text-amber-500/85 uppercase tracking-wider font-mono">Foto do veículo não enviada</span>
+                              <span className="text-[10px] text-slate-550">Insira uma URL válida abaixo para exibir a imagem real do veículo</span>
+                            </div>
+                          )}
+                          
+                          <div className="absolute inset-0 bg-gradient-to-t from-slate-950 via-slate-950/30 to-transparent pointer-events-none" />
+                          <div className="absolute bottom-5 left-5 right-5 text-left pointer-events-none">
+                            <div className="flex items-center gap-2">
+                              {activeDriver.photo_url && (
+                                <img src={activeDriver.photo_url} className="w-6 h-6 rounded-full border border-purple-500/30 object-cover" referrerPolicy="no-referrer" />
+                              )}
+                              <span className="bg-purple-500/10 border border-purple-500/20 text-purple-300 rounded-md px-2.5 py-0.5 text-[9px] font-mono uppercase font-bold tracking-widest">
+                                CHAUFFEUR: {activeDriver.display_name}
+                              </span>
+                            </div>
+                            <h4 className="font-display font-black text-2xl text-white mt-2">
+                              {activeDriver.vehicle_model || (
+                                <span className="text-amber-500 italic">Veículo não configurado</span>
+                              )}
+                            </h4>
+                            <p className="text-xs text-slate-450 mt-1 font-mono">
+                              Placa Oficial:{' '}
+                              {activeDriver.vehicle_plate ? (
+                                <span className="font-bold text-slate-200">{activeDriver.vehicle_plate}</span>
+                              ) : (
+                                <span className="text-amber-500 italic">Placa não cadastrada</span>
+                              )}
+                            </p>
+                          </div>
+                        </div>
+
+                        <div className="p-6 grid grid-cols-1 sm:grid-cols-4 gap-4 font-mono text-xs border-t border-slate-900 bg-slate-950/40">
+                          <div>
+                            <p className="text-slate-500 uppercase text-[9px] tracking-wider">CONSUMO</p>
+                            <p className="text-xs font-bold text-emerald-400 mt-1">
+                              {pricingSettings?.vehicle_consumption_km_l ? `${pricingSettings.vehicle_consumption_km_l} Km / L` : <span className="text-amber-500/70 italic">Não cadastrado</span>}
+                            </p>
+                          </div>
+                          <div>
+                            <p className="text-slate-500 uppercase text-[9px] tracking-wider">VALOR COMBUSTÍVEL</p>
+                            <p className="text-xs font-bold text-purple-400 mt-1">
+                              {pricingSettings?.fuel_price ? `R$ ${pricingSettings.fuel_price.toFixed(2)}` : <span className="text-slate-550">R$ 0.00</span>}
+                            </p>
+                          </div>
+                          <div>
+                            <p className="text-slate-500 uppercase text-[9px] tracking-wider font-extrabold text-[#b8abff]">ALUGUEL MENSAL</p>
+                            <p className="text-xs font-bold text-[#b8abff] mt-1">
+                              {pricingSettings?.monthly_rent ? `R$ ${pricingSettings.monthly_rent.toLocaleString('pt-BR')}` : <span className="text-slate-500">---</span>}
+                            </p>
+                          </div>
+                          <div>
+                            <p className="text-slate-500 uppercase text-[9px] tracking-wider font-extrabold text-slate-450">META MENSAL KM</p>
+                            <p className="text-xs font-bold text-slate-300 mt-1">
+                              {pricingSettings?.monthly_km_goal ? `${pricingSettings.monthly_km_goal.toLocaleString('pt-BR')} Km` : <span className="text-slate-500">---</span>}
+                            </p>
+                          </div>
+                        </div>
+                        
+                        <div className="px-6 py-3 bg-[#0c0d18] border-t border-slate-900 flex justify-between items-center text-[10px] font-mono text-slate-400">
+                          <span>STATUS EM TEMPO REAL:</span>
+                          <span className={`px-2.5 py-0.5 rounded-full border text-[9px] font-bold uppercase ${
+                            activeDriver.status === 'online'
+                              ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-400'
+                              : activeDriver.status === 'ocupado'
+                              ? 'bg-amber-500/10 border-amber-500/30 text-amber-400'
+                              : 'bg-slate-900 border-slate-800 text-slate-500'
+                          }`}>
+                            {activeDriver.status ? activeDriver.status.toUpperCase() : 'OFFLINE'}
+                          </span>
+                        </div>
+                      </div>
+
+                      {/* Editing Form */}
+                      <form onSubmit={handleSaveVehicleConfig} className="bg-[#0a0b12] border border-slate-900 rounded-3xl p-6 space-y-6">
+                        <div className="flex justify-between items-center pb-4 border-b border-slate-900">
+                          <div>
+                            <h3 className="font-display font-black text-sm text-white">Editar Cadastro do Veículo e Status</h3>
+                            <p className="text-xs text-slate-500 mt-1">Atualize os dados reais de frota do motorista selecionado</p>
+                          </div>
+                          <Settings className="w-5 h-5 text-purple-400" />
+                        </div>
+
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-5 text-xs">
+                          <div className="space-y-1.5">
+                            <label className="block text-[10px] uppercase tracking-wider font-extrabold text-slate-450">Modelo do Veículo</label>
+                            <input
+                              type="text"
+                              value={vehicleModelInput}
+                              onChange={(e) => setVehicleModelInput(e.target.value)}
+                              placeholder="Ex: Mercedes-Benz E-Class"
+                              className="w-full bg-slate-950 border border-slate-900 focus:border-purple-700 text-slate-100 rounded-xl py-3 px-4 font-bold focus:outline-none font-sans"
+                            />
+                          </div>
+
+                          <div className="space-y-1.5">
+                            <label className="block text-[10px] uppercase tracking-wider font-extrabold text-slate-450">Placa do Veículo</label>
+                            <input
+                              type="text"
+                              value={vehiclePlateInput}
+                              onChange={(e) => setVehiclePlateInput(e.target.value)}
+                              placeholder="Ex: ABC1D23"
+                              className="w-full bg-slate-950 border border-slate-900 focus:border-purple-700 text-slate-100 rounded-xl py-3 px-4 font-bold focus:outline-none font-sans"
+                            />
+                          </div>
+
+                          <div className="sm:col-span-2 space-y-1.5">
+                            <label className="block text-[10px] uppercase tracking-wider font-extrabold text-slate-450">URL da Foto do Veículo</label>
+                            <input
+                              type="url"
+                              value={vehiclePhotoUrlInput}
+                              onChange={(e) => setVehiclePhotoUrlInput(e.target.value)}
+                              placeholder="https://exemplo.com/foto.jpg"
+                              className="w-full bg-slate-950 border border-slate-900 focus:border-purple-700 text-slate-100 rounded-xl py-3 px-4 font-bold focus:outline-none font-sans"
+                            />
+                          </div>
+
+                          <div className="space-y-1.5">
+                            <label className="block text-[10px] uppercase tracking-wider font-extrabold text-slate-450">Status de Disponibilidade</label>
+                            <select
+                              value={driverStatusInput}
+                              onChange={(e) => setDriverStatusInput(e.target.value as DriverStatusType)}
+                              className="w-full bg-slate-950 border border-slate-900 focus:border-purple-700 text-slate-100 rounded-xl py-3 px-4 font-bold focus:outline-none font-sans"
+                            >
+                              <option value="online">Online</option>
+                              <option value="ocupado">Ocupado</option>
+                              <option value="offline">Offline</option>
+                            </select>
+                          </div>
+
+                          <div className="space-y-1.5">
+                            <label className="block text-[10px] uppercase tracking-wider font-extrabold text-slate-450">Consumo de Combustível (Km/L)</label>
+                            <input
+                              type="number"
+                              step="0.1"
+                              value={vehicleConsumptionInput}
+                              onChange={(e) => setVehicleConsumptionInput(e.target.value)}
+                              placeholder="Ex: 10.5"
+                              className="w-full bg-slate-950 border border-slate-900 focus:border-purple-700 text-slate-100 rounded-xl py-3 px-4 font-bold focus:outline-none font-sans"
+                            />
+                          </div>
+                        </div>
+
+                        <div className="flex flex-col sm:flex-row justify-between items-center pt-4 border-t border-slate-900 gap-4">
+                          {vehicleMessage ? (
+                            <div className={`flex items-center gap-2 text-xs font-bold leading-normal ${
+                              vehicleMessage.type === 'success' ? 'text-emerald-400' : 'text-red-400'
+                            }`}>
+                              {vehicleMessage.type === 'success' ? <CheckCircle2 className="w-4 h-4 flex-shrink-0" /> : <AlertCircle className="w-4 h-4 flex-shrink-0" />}
+                              <span>{vehicleMessage.text}</span>
+                            </div>
+                          ) : <div />}
+
+                          <button
+                            type="submit"
+                            disabled={isVehicleSaving}
+                            className="bg-purple-600 hover:bg-purple-400 text-white font-bold text-xs uppercase tracking-widest py-3 px-6 rounded-xl transition-all cursor-pointer disabled:opacity-55"
+                          >
+                            {isVehicleSaving ? 'Salvando...' : 'Salvar Cadastro'}
+                          </button>
+                        </div>
+                      </form>
+                    </>
+                  ) : (
+                    <div className="p-12 text-center text-xs text-slate-500 bg-[#0a0b12] border border-slate-900 rounded-3xl">
+                      Nenhum motorista disponível para configurar veículo.
+                    </div>
+                  )}
+                </div>
+
               </div>
             )}
 

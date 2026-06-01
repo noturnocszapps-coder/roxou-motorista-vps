@@ -352,6 +352,8 @@ function mapDbToRideRequest(db: any): RideRequest {
 // Cobre tanto o modo Demo local quanto a API real do Supabase
 // ==========================================
 
+let activeUserPromise: Promise<Profile | null> | null = null;
+
 export const supabaseService = {
   // --- AUTENTICAÇÃO ---
   async signInWithGoogle(): Promise<{ error: any }> {
@@ -400,6 +402,11 @@ export const supabaseService = {
         return null;
       }
       return JSON.parse(userJSON);
+    }
+
+    if (activeUserPromise) {
+      console.log('[AUTH] utilising active user fetch promise (deduplicated)');
+      return activeUserPromise;
     }
 
     const fetchUserPromise = async (): Promise<Profile | null> => {
@@ -473,17 +480,28 @@ export const supabaseService = {
       }
     };
 
-    // Timeout de segurança de no máximo 15 segundos
-    return Promise.race([
-      fetchUserPromise(),
-      new Promise<Profile | null>((resolve) => {
-        setTimeout(() => {
-          console.warn('[AUTH] timeout de 15 segundos atingido ao buscar usuário do Supabase');
-          console.warn('[AUTH] profile failed (timeout)');
-          resolve(null);
-        }, 15000);
-      })
+    let timeoutId: any;
+    const timeoutPromise = new Promise<Profile | null>((resolve) => {
+      timeoutId = setTimeout(() => {
+        console.warn('[AUTH] timeout de 15 segundos atingido ao buscar usuário do Supabase');
+        console.warn('[AUTH] profile failed (timeout)');
+        resolve(null);
+      }, 15000);
+    });
+
+    activeUserPromise = Promise.race([
+      fetchUserPromise().then(res => {
+        clearTimeout(timeoutId);
+        return res;
+      }),
+      timeoutPromise
     ]);
+
+    activeUserPromise.finally(() => {
+      activeUserPromise = null;
+    });
+
+    return activeUserPromise;
   },
 
   // Simulação para o Painel de Desenvolvimento trocar de usuário rapidamente
@@ -517,6 +535,21 @@ export const supabaseService = {
 
   subscribeToAuth(callback: (authUser: any | null, profile: Profile | null, event: string | null) => void) {
     if (isDemoMode) {
+      // Immediate execution of current state under INITIAL_SESSION to align with onAuthStateChange behavior
+      const initialUserJSON = localStorage.getItem(KEY_CURRENT_USER);
+      if (initialUserJSON) {
+        try {
+          const prof = JSON.parse(initialUserJSON);
+          callback(prof, prof, 'INITIAL_SESSION');
+        } catch {
+          callback(null, null, 'INITIAL_SESSION');
+        }
+      } else {
+        this.getCurrentUser().then(prof => {
+          callback(prof, prof, 'INITIAL_SESSION');
+        });
+      }
+
       return subscribeLocalEvent('auth_change', (prof) => {
         if (prof) {
           callback(prof, prof, 'SIGNED_IN');
