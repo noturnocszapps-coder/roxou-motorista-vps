@@ -39,7 +39,7 @@ import {
   Sparkles,
   Building2,
   ChevronLeft,
-  Map,
+  Map as MapIcon,
   MapPin,
   Navigation,
   Compass,
@@ -379,7 +379,7 @@ export function AdminDashboardView({ currentUser, onRefreshUser }: AdminProps) {
 
   // Clientes Únicos
   const clientsData = useMemo(() => {
-    const map = new Map<string, { id: string; name: string; email: string; totalSpent: number; tripsCount: number; lastTripDate: string }>();
+    const clientsObj: Record<string, { id: string; name: string; email: string; totalSpent: number; tripsCount: number; lastTripDate: string }> = {};
     
     rides.forEach(ride => {
       const email = ride.profiles?.email || 'passageiro@exemplo.com';
@@ -388,17 +388,17 @@ export function AdminDashboardView({ currentUser, onRefreshUser }: AdminProps) {
       
       const isConcluded = ride.status === 'concluido';
       
-      if (!map.has(email)) {
-        map.set(email, {
+      if (!clientsObj[email]) {
+        clientsObj[email] = {
           id: ride.user_id,
           name,
           email,
           totalSpent: isConcluded ? price : 0,
           tripsCount: 1,
           lastTripDate: ride.scheduled_date
-        });
+        };
       } else {
-        const existing = map.get(email)!;
+        const existing = clientsObj[email];
         existing.tripsCount += 1;
         if (isConcluded) existing.totalSpent += price;
         if (ride.scheduled_date > existing.lastTripDate) {
@@ -407,7 +407,7 @@ export function AdminDashboardView({ currentUser, onRefreshUser }: AdminProps) {
       }
     });
 
-    return Array.from(map.values());
+    return Object.values(clientsObj);
   }, [rides]);
 
   const filteredClients = useMemo(() => {
@@ -1098,7 +1098,7 @@ export function AdminDashboardView({ currentUser, onRefreshUser }: AdminProps) {
                                       {/* Mileage / Passenger details */}
                                       <div className="flex justify-between items-center pt-2.5 border-t border-[#1d1f39]/40 text-[9.5px]">
                                         <div className="flex items-center gap-1.5 text-slate-400 font-mono">
-                                          <Map className="w-3.5 h-3.5 text-[#a78bfa] shrink-0" />
+                                          <MapIcon className="w-3.5 h-3.5 text-[#a78bfa] shrink-0" />
                                           <span>{mockedDist} km</span>
                                         </div>
 
