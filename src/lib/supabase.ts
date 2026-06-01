@@ -626,27 +626,33 @@ export const supabaseService = {
     }
 
     try {
-      console.log('[SUPABASE QUERY]', 'driver_status');
-      const { data, error } = await supabase!
+      console.log('[SUPABASE QUERY] [SELECT] from table: driver_status. Filtering: Latest updated_at');
+      const { data, error, status, statusText } = await supabase!
         .from('driver_status')
         .select('*')
         .order('updated_at', { ascending: false })
         .limit(1)
         .maybeSingle();
 
+      console.log('[SUPABASE RESPONSE] [SELECT] driver_status table:', { status, statusText, data, error });
+
       if (error || !data) {
+        if (error) {
+          console.error('[SUPABASE ERROR] Erro ao buscar status do motorista real:', error);
+        }
         return { id: 1, status: 'offline', updated_at: new Date().toISOString(), updated_by: null };
       }
+      
       const raw = data as any;
       return {
         id: raw.id,
-        driver_id: raw.driver_id,
+        driver_id: raw.updated_by || null, // Map from updated_by because there's no driver_id column
         status: raw.status,
         updated_at: raw.updated_at,
-        updated_by: raw.driver_id || null
+        updated_by: raw.updated_by || null
       };
     } catch (err) {
-      console.error('Erro ao buscar status do motorista real:', err);
+      console.error('[SUPABASE EXCEPTION] Erro ao buscar status do motorista real:', err);
       return { id: 1, status: 'offline', updated_at: new Date().toISOString(), updated_by: null };
     }
   },
@@ -662,32 +668,48 @@ export const supabaseService = {
     }
 
     try {
-      // Buscar se já existe registro com aquele driverId
-      console.log('[SUPABASE QUERY]', 'driver_status');
-      const { data: existing } = await supabase!
+      // O banco tem um check constraint de id = 1, só existindo um registro global de status.
+      // E não existe uma coluna driver_id. Em vez disso, existe updated_by.
+      console.log('[SUPABASE QUERY] [SELECT] from table: driver_status. Checking existence of id = 1');
+      const { data: existing, error: selectError, status: selStatus, statusText: selStatusText } = await supabase!
         .from('driver_status')
         .select('id')
-        .eq('driver_id', adminUserId)
+        .eq('id', 1)
         .maybeSingle();
 
+      console.log('[SUPABASE RESPONSE] [SELECT] driver_status check id=1:', { status: selStatus, statusText: selStatusText, existing, error: selectError });
+
       let query;
+      let payload;
+      let mutationType: 'UPDATE' | 'INSERT';
+
       if (existing) {
-        console.log('[SUPABASE QUERY]', 'driver_status');
+        payload = { status, updated_at, updated_by: adminUserId };
+        mutationType = 'UPDATE';
+        console.log('[SUPABASE QUERY] [UPDATE] driver_status. Target: id = 1. Payload:', payload);
         query = supabase!
           .from('driver_status')
-          .update({ status, updated_at })
-          .eq('driver_id', adminUserId);
+          .update(payload)
+          .eq('id', 1);
       } else {
-        console.log('[SUPABASE QUERY]', 'driver_status');
+        payload = { id: 1, status, updated_at, updated_by: adminUserId };
+        mutationType = 'INSERT';
+        console.log('[SUPABASE QUERY] [INSERT] driver_status. Payload:', payload);
         query = supabase!
           .from('driver_status')
-          .insert({ driver_id: adminUserId, status, updated_at });
+          .insert(payload);
       }
 
-      const { error } = await query;
-      return !error;
+      const { error: mutationError, status: mutStatus, statusText: mutStatusText } = await query;
+      console.log(`[SUPABASE RESPONSE] [${mutationType}] driver_status table:`, { status: mutStatus, statusText: mutStatusText, error: mutationError });
+
+      if (mutationError) {
+        console.error(`[SUPABASE ERROR] Falha ao executar ${mutationType} em driver_status:`, mutationError);
+        return false;
+      }
+      return true;
     } catch (err) {
-      console.error('Erro ao atualizar driver status:', err);
+      console.error('[SUPABASE EXCEPTION] Erro ao atualizar driver status:', err);
       return false;
     }
   },
@@ -1123,17 +1145,75 @@ export const supabaseService = {
       return JSON.parse(driversStr);
     }
     try {
-      console.log('[SUPABASE QUERY]', 'drivers');
-      const { data, error } = await supabase!
+      console.log('[SUPABASE QUERY] [SELECT] from table: drivers (all drivers)');
+      const { data: driversData, error: driversError, status: dStatus, statusText: dStatusText } = await supabase!
         .from('drivers')
         .select('*');
-      if (error) {
-        console.error('Erro ao buscar motoristas reais:', error);
+      
+      console.log('[SUPABASE RESPONSE] [SELECT] drivers table:', { status: dStatus, statusText: dStatusText, dataLength: driversData?.length, error: driversError });
+
+      // Buscar todos os profiles administrativos reais do banco para garantir que apareçam como motoristas
+      console.log('[SUPABASE QUERY] [SELECT] from table: profiles inside getDrivers (role = admin)');
+      const { data: adminProfiles, error: profilesError } = await supabase!
+        .from('profiles')
+        .select('*')
+        .eq('role', 'admin');
+        
+      console.log('[SUPABASE RESPONSE] [SELECT] profiles (role = admin):', { count: adminProfiles?.length, error: profilesError });
+
+      const driversList = (driversData || []) as Driver[];
+
+      if (adminProfiles && adminProfiles.length > 0) {
+        for (const admin of adminProfiles) {
+          const exists = driversList.some(d => d.id === admin.id || d.profile_id === admin.id);
+          if (!exists) {
+            console.log('[SUPABASE INTEGRITY SYNC] Admin profile not found in drivers table. Syncing profile as driver:', admin.email);
+            const newDriverObj: Driver = {
+              id: admin.id,
+              profile_id: admin.id,
+              display_name: admin.full_name || 'Fernando Henrique',
+              photo_url: admin.avatar_url || 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=150&h=150&q=80',
+              vehicle_model: '',
+              vehicle_plate: '',
+              vehicle_photo_url: '',
+              status: 'offline',
+              created_at: admin.created_at,
+              updated_at: admin.updated_at
+            };
+
+            // Tenta inserir no banco para persistir o motorista
+            const { error: insError } = await supabase!
+              .from('drivers')
+              .insert({
+                id: admin.id,
+                profile_id: admin.id,
+                display_name: newDriverObj.display_name,
+                photo_url: newDriverObj.photo_url,
+                vehicle_model: '',
+                vehicle_plate: '',
+                vehicle_photo_url: '',
+                status: 'offline'
+              });
+            
+            if (insError) {
+              console.warn('[SUPABASE INTEGRITY WARN] Could not persist synced driver in database (this is expected if RLS prevents inserts), using client fallback:', insError);
+            } else {
+              console.log('[SUPABASE INTEGRITY SYNC] Driver persisted successfully in table: drivers');
+            }
+
+            // Sempre adicionar ao retorno para garantir visualização no painel
+            driversList.push(newDriverObj);
+          }
+        }
+      }
+
+      if (driversError && driversList.length === 0) {
+        console.error('[SUPABASE ERROR] Erro ao buscar motoristas reais:', driversError);
         return [];
       }
-      return data as Driver[];
+      return driversList;
     } catch (err) {
-      console.error('Exceção ao buscar motoristas reais:', err);
+      console.error('[SUPABASE EXCEPTION] Exceção ao buscar motoristas reais:', err);
       return [];
     }
   },
@@ -1145,19 +1225,22 @@ export const supabaseService = {
       return settingsList.find(s => s.driver_id === driverId) || null;
     }
     try {
-      console.log('[SUPABASE QUERY]', 'driver_settings');
-      const { data, error } = await supabase!
+      console.log('[SUPABASE QUERY] [SELECT] from table: driver_settings. Filters: driver_id =', driverId);
+      const { data, error, status, statusText } = await supabase!
         .from('driver_settings')
         .select('*')
         .eq('driver_id', driverId)
         .maybeSingle();
+
+      console.log('[SUPABASE RESPONSE] [SELECT] driver_settings table:', { status, statusText, data, error });
+
       if (error) {
-        console.error('Erro ao buscar configurações do motorista:', error);
+        console.error('[SUPABASE ERROR] Erro ao buscar configurações do motorista:', error);
         return null;
       }
       return data as DriverSettings;
     } catch (err) {
-       console.error('Exceção ao buscar configurações do motorista:', err);
+       console.error('[SUPABASE EXCEPTION] Exceção ao buscar configurações do motorista:', err);
        return null;
     }
   },
@@ -1198,36 +1281,62 @@ export const supabaseService = {
       return true;
     }
     try {
-      console.log('[SUPABASE QUERY]', 'driver_settings');
-      const { data: existing } = await supabase!
+      console.log('[SUPABASE QUERY] [SELECT] from table: driver_settings (checking existence). Filters: driver_id =', driverId);
+      const { data: existing, error: selectError, status: sStatus, statusText: sStatusText } = await supabase!
         .from('driver_settings')
         .select('id')
         .eq('driver_id', driverId)
         .maybeSingle();
 
+      console.log('[SUPABASE RESPONSE] [SELECT] check existence of driver_settings:', { status: sStatus, statusText: sStatusText, existing, error: selectError });
+
       let query;
+      let payload;
+      let mutationType: 'INSERT' | 'UPDATE';
       const updated_at = new Date().toISOString();
+
       if (existing) {
-        console.log('[SUPABASE QUERY]', 'driver_settings');
+        payload = { ...settings, updated_at };
+        mutationType = 'UPDATE';
+        console.log('[SUPABASE MUTATION] [UPDATE] table: driver_settings. Filters: driver_id =', driverId, 'Payload:', payload);
         query = supabase!
           .from('driver_settings')
-          .update({ ...settings, updated_at })
+          .update(payload)
           .eq('driver_id', driverId);
       } else {
-        console.log('[SUPABASE QUERY]', 'driver_settings');
+        payload = {
+          driver_id: driverId,
+          fuel_price: settings.fuel_price ?? 5.80,
+          vehicle_consumption_km_l: settings.vehicle_consumption_km_l ?? 10.5,
+          monthly_rent: settings.monthly_rent ?? 2800,
+          monthly_km_goal: settings.monthly_km_goal ?? 4500,
+          minimum_km_price: settings.minimum_km_price ?? 2.50,
+          operational_margin_percent: settings.operational_margin_percent ?? 50,
+          displacement_percent: settings.displacement_percent ?? 15,
+          night_extra_percent: settings.night_extra_percent ?? 25,
+          night_extra_start_time: settings.night_extra_start_time ?? '22:00',
+          minimum_trip_price: settings.minimum_trip_price ?? 35.00,
+          stop_fee: settings.stop_fee ?? 15.00,
+          created_at: updated_at,
+          updated_at
+        };
+        mutationType = 'INSERT';
+        console.log('[SUPABASE MUTATION] [INSERT] table: driver_settings. Payload:', payload);
         query = supabase!
           .from('driver_settings')
-          .insert({
-            driver_id: driverId,
-            ...settings,
-            created_at: updated_at,
-            updated_at
-          });
+          .insert(payload);
       }
-      const { error } = await query;
-      return !error;
+
+      const { error, status: respStatus, statusText: respStatusText } = await query;
+      console.log(`[SUPABASE RESPONSE] [${mutationType}] driver_settings table:`, { status: respStatus, statusText: respStatusText, error });
+
+      if (error) {
+        console.error(`[SUPABASE ERROR] Erro na mutação ${mutationType} de driver_settings:`, error);
+        return false;
+      }
+      return true;
     } catch (err) {
-      console.error('Exceção ao atualizar configurações do motorista:', err);
+      console.error('[SUPABASE EXCEPTION] Exceção ao atualizar configurações do motorista:', err);
       return false;
     }
   },
@@ -1250,17 +1359,61 @@ export const supabaseService = {
       return false;
     }
     try {
-      console.log('[SUPABASE QUERY]', 'drivers');
-      const { error } = await supabase!
+      console.log('[SUPABASE QUERY] [SELECT] from drivers. Checking if driver ID exists:', driverId);
+      const { data: existing, error: selectError, status: sStatus, statusText: sStatusText } = await supabase!
         .from('drivers')
-        .update({
+        .select('id')
+        .eq('id', driverId)
+        .maybeSingle();
+
+      console.log('[SUPABASE RESPONSE] [SELECT] check existing driver:', { status: sStatus, statusText: sStatusText, existing, error: selectError });
+
+      let query;
+      let payload;
+      let mutationType: 'INSERT' | 'UPDATE';
+      const updated_at = new Date().toISOString();
+
+      if (existing) {
+        payload = {
           ...updates,
-          updated_at: new Date().toISOString()
-        })
-        .eq('id', driverId);
-      return !error;
+          updated_at
+        };
+        mutationType = 'UPDATE';
+        console.log('[SUPABASE MUTATION] [UPDATE] table: drivers. Filters: id =', driverId, 'Payload:', payload);
+        query = supabase!
+          .from('drivers')
+          .update(payload)
+          .eq('id', driverId);
+      } else {
+        payload = {
+          id: driverId,
+          profile_id: driverId,
+          display_name: updates.display_name || 'Fernando Henrique',
+          photo_url: updates.photo_url || 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=150&h=150&q=80',
+          vehicle_model: updates.vehicle_model || '',
+          vehicle_plate: updates.vehicle_plate || '',
+          vehicle_photo_url: updates.vehicle_photo_url || '',
+          status: updates.status || 'offline',
+          created_at: updated_at,
+          updated_at
+        };
+        mutationType = 'INSERT';
+        console.log('[SUPABASE MUTATION] [INSERT] table: drivers. Payload:', payload);
+        query = supabase!
+          .from('drivers')
+          .insert(payload);
+      }
+
+      const { error, status: respStatus, statusText: respStatusText } = await query;
+      console.log(`[SUPABASE RESPONSE] [${mutationType}] drivers table:`, { status: respStatus, statusText: respStatusText, error });
+
+      if (error) {
+        console.error(`[SUPABASE ERROR] Falha ao executar ${mutationType} em drivers table:`, error);
+        return false;
+      }
+      return true;
     } catch (err) {
-      console.error('Exceção ao atualizar motorista:', err);
+      console.error('[SUPABASE EXCEPTION] Exceção ao atualizar motorista:', err);
       return false;
     }
   }
