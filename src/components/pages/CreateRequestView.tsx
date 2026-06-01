@@ -5,10 +5,10 @@
 
 import React, { useState, useEffect } from 'react';
 import { supabaseService } from '../../lib/supabase';
-import { Profile, TripType } from '../../types';
-import { calculateRidePrice, formatCurrency } from '../../lib/pricing';
+import { Profile, TripType, Driver, DriverSettings } from '../../types';
+import { calculateRideEstimate, formatCurrency } from '../../lib/pricing';
 import { navigate } from '../../lib/navigation';
-import { ArrowLeft, MapPin, Navigation, Calendar, Clock, Users, FileText, Sparkles, Plus, Info } from 'lucide-react';
+import { ArrowLeft, MapPin, Navigation, Calendar, Clock, Users, FileText, Sparkles, Plus, Info, ShieldCheck } from 'lucide-react';
 
 interface CreateProps {
   currentUser: Profile;
@@ -34,8 +34,71 @@ export function CreateRequestView({ currentUser }: CreateProps) {
   const [loading, setLoading] = useState(false);
   const [validationError, setValidationError] = useState<string | null>(null);
 
-  // Calcular preço em tempo real
-  const pricing = calculateRidePrice(Number(distanceKm) || 0, tripType);
+  // Estados para Precificação Realista por Motorista Particular
+  const [drivers, setDrivers] = useState<Driver[]>([]);
+  const [selectedDriverId, setSelectedDriverId] = useState<string>('');
+  const [selectedDriverSettings, setSelectedDriverSettings] = useState<DriverSettings | null>(null);
+  const [stopsCount, setStopsCount] = useState<number>(0);
+
+  // Buscar motoristas cadastrados
+  useEffect(() => {
+    async function fetchDrivers() {
+      try {
+        const list = await supabaseService.getDrivers();
+        setDrivers(list);
+        if (list.length > 0) {
+          setSelectedDriverId(list[0].id);
+        }
+      } catch (e) {
+        console.error('Erro ao buscar motoristas executivos', e);
+      }
+    }
+    fetchDrivers();
+  }, []);
+
+  // Buscar tarifas do motorista selecionado
+  useEffect(() => {
+    if (!selectedDriverId) return;
+    async function fetchDriverSettings() {
+      try {
+        const settings = await supabaseService.getDriverSettings(selectedDriverId);
+        setSelectedDriverSettings(settings);
+      } catch (e) {
+        console.error('Erro ao buscar tarifas do motorista', e);
+      }
+    }
+    fetchDriverSettings();
+  }, [selectedDriverId]);
+
+  // Tarifas de contingência padrão se ainda estiver carregando
+  const defaultSettings: DriverSettings = {
+    id: '',
+    driver_id: selectedDriverId || '',
+    fuel_price: 6.00,
+    vehicle_consumption_km_l: 10.0,
+    monthly_rent: 3000,
+    monthly_km_goal: 5000,
+    minimum_km_price: 2.00,
+    operational_margin_percent: 60,
+    displacement_percent: 15,
+    night_extra_percent: 25,
+    night_extra_start_time: '23:00',
+    minimum_trip_price: 40.00,
+    stop_fee: 15.00,
+    created_at: new Date().toISOString(),
+    updated_at: new Date().toISOString()
+  };
+
+  const activeSettings = selectedDriverSettings || defaultSettings;
+  const effectiveDistance = tripType === 'ida_e_volta' ? (Number(distanceKm) * 2) : Number(distanceKm);
+
+  // Calcular preço realista profissional em tempo real
+  const pricing = calculateRideEstimate(
+    activeSettings,
+    effectiveDistance,
+    scheduledTime,
+    stopsCount
+  );
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -80,6 +143,20 @@ export function CreateRequestView({ currentUser }: CreateProps) {
         passenger_count: Number(passengerCount),
         observation: observation.trim() || null,
         estimated_price: pricing.total,
+        driver_id: selectedDriverId || null,
+        stops: stopsCount > 0 ? Array.from({ length: stopsCount }, (_, i) => `Parada ${i + 1}`) : null,
+        duration_minutes: pricing.duration_minutes,
+        base_price: pricing.base_price,
+        displacement_fee: pricing.displacement_fee,
+        night_fee: pricing.night_fee,
+        stop_fee: pricing.stop_fee,
+        price_breakdown: {
+          driver_km_price: pricing.driver_km_price,
+          isMinimumApplied: pricing.isMinimumApplied,
+          isNightApplied: pricing.isNightApplied,
+          stopsCount: stopsCount,
+          effectiveDistance: effectiveDistance
+        }
       });
 
       if (response) {
@@ -153,6 +230,53 @@ export function CreateRequestView({ currentUser }: CreateProps) {
           </div>
         </div>
 
+        {/* Motorista Particular de Luxo */}
+        <div className="bg-roxou-card border border-slate-800/80 rounded-2xl p-4 text-left space-y-3">
+          <p className="text-[10px] tracking-wider font-semibold text-roxou-neon uppercase flex items-center gap-1.5">
+            <ShieldCheck className="w-3.5 h-3.5 text-roxou-neon" />
+            Chauffeur Executivo Particular
+          </p>
+          
+          <div className="space-y-3">
+            <label className="text-[10px] text-slate-400 font-semibold uppercase tracking-wider block mb-0.5">Selecione o Profissional</label>
+            <div className="relative">
+              <select
+                value={selectedDriverId}
+                onChange={(e) => setSelectedDriverId(e.target.value)}
+                className="w-full bg-slate-900 border border-slate-800 rounded-xl px-3 py-2.5 text-xs text-slate-100 focus:outline-none focus:border-roxou-purple appearance-none cursor-pointer"
+              >
+                {drivers.map(d => (
+                  <option key={d.id} value={d.id} className="bg-[#12101b]">
+                    {d.display_name} - {d.vehicle_model}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            {/* Preview do Motorista Selecionado */}
+            {selectedDriverId && drivers.find(d => d.id === selectedDriverId) && (
+              (() => {
+                const activeD = drivers.find(d => d.id === selectedDriverId)!;
+                return (
+                  <div className="bg-slate-950/45 border border-slate-900 rounded-xl p-3 flex items-center gap-3 mt-1.5 font-sans">
+                    <img
+                      src={activeD.photo_url || 'https://images.unsplash.com/photo-1544005313-94ddf0286df2?auto=format&fit=crop&w=60&h=60&q=80'}
+                      alt={activeD.display_name}
+                      referrerPolicy="no-referrer"
+                      className="w-10 h-10 rounded-full object-cover border border-slate-800"
+                    />
+                    <div className="flex-1 min-w-0 text-left">
+                      <p className="text-xs font-bold text-white leading-tight truncate">{activeD.display_name}</p>
+                      <p className="text-[10px] text-slate-400 mt-0.5 truncate">{activeD.vehicle_model} • <span className="font-mono text-slate-300">{activeD.vehicle_plate}</span></p>
+                      <p className="text-[9px] text-[#a78bfa] font-mono mt-1 font-bold">Tarifa Km Base: {formatCurrency(pricing.driver_km_price)}/km</p>
+                    </div>
+                  </div>
+                );
+              })()
+            )}
+          </div>
+        </div>
+
         {/* Agendamento */}
         <div className="bg-roxou-card border border-slate-800/80 rounded-2xl p-4 text-left space-y-3.5">
           <p className="text-[10px] tracking-wider font-semibold text-roxou-neon uppercase">Agendamento de Embarque</p>
@@ -210,33 +334,49 @@ export function CreateRequestView({ currentUser }: CreateProps) {
             <p className="text-[9px] text-slate-500 mt-1">Insira os quilômetros retornados pelo Maps/Waze para estimar preço real.</p>
           </div>
 
-          <div className="grid grid-cols-2 gap-3 pt-1">
+          <div className="grid grid-cols-3 gap-2.5 pt-1">
             <div>
-              <label className="text-[10px] text-slate-400 font-semibold uppercase tracking-wider block mb-1">Tipo de Trajeto</label>
+              <label className="text-[9px] text-slate-400 font-semibold uppercase tracking-wider block mb-1 truncate">Tipo de Trajeto</label>
               <div className="relative">
                 <select
                   value={tripType}
                   onChange={(e) => setTripType(e.target.value as TripType)}
-                  className="w-full bg-slate-900/50 border border-slate-800 rounded-xl px-3 py-2.5 text-xs text-slate-100 focus:outline-none focus:border-roxou-purple appearance-none cursor-pointer"
+                  className="w-full bg-[#0c0d1b] border border-slate-800 rounded-xl px-2 py-2 text-[10px] text-slate-100 focus:outline-none focus:border-roxou-purple appearance-none cursor-pointer"
                 >
                   <option value="ida" className="bg-[#12101b]">Apenas ida</option>
-                  <option value="ida_e_volta" className="bg-[#12101b]">Ida e volta (2x km)</option>
+                  <option value="ida_e_volta" className="bg-[#12101b]">Ida/Volta</option>
                 </select>
               </div>
             </div>
 
             <div>
-              <label className="text-[10px] text-slate-400 font-semibold uppercase tracking-wider block mb-1">Passageiros</label>
+              <label className="text-[9px] text-slate-400 font-semibold uppercase tracking-wider block mb-1 truncate">Passageiros</label>
               <div className="relative">
                 <select
                   value={passengerCount}
                   onChange={(e) => setPassengerCount(Number(e.target.value))}
-                  className="w-full bg-slate-900/50 border border-slate-800 rounded-xl px-3 py-2.5 text-xs text-slate-100 focus:outline-none focus:border-roxou-purple appearance-none cursor-pointer"
+                  className="w-full bg-[#0c0d1b] border border-slate-800 rounded-xl px-2 py-2 text-[10px] text-slate-100 focus:outline-none focus:border-roxou-purple appearance-none cursor-pointer"
                 >
-                  <option value={1} className="bg-[#12101b]">1 Passageiro</option>
-                  <option value={2} className="bg-[#12101b]">2 Passageiros</option>
-                  <option value={3} className="bg-[#12101b]">3 Passageiros</option>
-                  <option value={4} className="bg-[#12101b]">4 Passageiros (Lim.)</option>
+                  <option value={1} className="bg-[#12101b]">1 Pass.</option>
+                  <option value={2} className="bg-[#12101b]">2 Pass.</option>
+                  <option value={3} className="bg-[#12101b]">3 Pass.</option>
+                  <option value={4} className="bg-[#12101b]">4 Lim.</option>
+                </select>
+              </div>
+            </div>
+
+            <div>
+              <label className="text-[9px] text-slate-400 font-semibold uppercase tracking-wider block mb-1 truncate">Paradas Extras</label>
+              <div className="relative">
+                <select
+                  value={stopsCount}
+                  onChange={(e) => setStopsCount(Number(e.target.value))}
+                  className="w-full bg-[#0c0d1b] border border-slate-800 rounded-xl px-2 py-2 text-[10px] text-slate-100 focus:outline-none focus:border-roxou-purple appearance-none cursor-pointer"
+                >
+                  <option value={0} className="bg-[#12101b]">Nenhuma</option>
+                  <option value={1} className="bg-[#12101b]">1 Parada</option>
+                  <option value={2} className="bg-[#12101b]">2 Paradas</option>
+                  <option value={3} className="bg-[#12101b]">3 Paradas</option>
                 </select>
               </div>
             </div>
@@ -262,36 +402,59 @@ export function CreateRequestView({ currentUser }: CreateProps) {
         <div className="bg-[#100b21] hover:bg-[#130d29] border border-roxou-purple/30 rounded-2xl p-4 text-left shadow-lg">
           <div className="flex items-center gap-1.5 mb-3 text-roxou-neon">
             <Sparkles className="w-4 h-4 text-yellow-400" />
-            <span className="font-display font-semibold text-xs uppercase tracking-wide">Orçamento Estimado</span>
+            <span className="font-display font-semibold text-xs uppercase tracking-wide">Orçamento Executivo Detalhado</span>
           </div>
 
           <div className="space-y-1.5 text-xs text-slate-300">
             <div className="flex justify-between">
-              <span>Distância calculada:</span>
+              <span>Distância percorrida:</span>
               <span className="font-mono text-slate-100">
-                {pricing.distance} Km {tripType === 'ida_e_volta' ? '(dobrada)' : ''}
+                {effectiveDistance} Km {tripType === 'ida_e_volta' ? '(dobrada)' : ''}
               </span>
             </div>
+            
             <div className="flex justify-between">
-              <span>Tarifa por Km (R$ 2,50):</span>
-              <span className="font-mono text-slate-100">{formatCurrency(pricing.subtotal)}</span>
-            </div>
-            <div className="flex justify-between">
-              <span>Taxa de Agendamento:</span>
-              <span className="font-mono text-slate-100">{formatCurrency(pricing.fee)}</span>
+              <span>Tarifa Base ({formatCurrency(pricing.driver_km_price)}/km):</span>
+              <span className="font-mono text-slate-100">{formatCurrency(pricing.base_price)}</span>
             </div>
 
+            <div className="flex justify-between">
+              <span>Mobilização / Deslocamento ({activeSettings.displacement_percent}%):</span>
+              <span className="font-mono text-slate-100">{formatCurrency(pricing.displacement_fee)}</span>
+            </div>
+
+            {pricing.night_fee > 0 && (
+              <div className="flex justify-between text-indigo-300">
+                <span>Adicional Noturno ({activeSettings.night_extra_percent}%):</span>
+                <span className="font-mono">{formatCurrency(pricing.night_fee)}</span>
+              </div>
+            )}
+
+            {stopsCount > 0 && (
+              <div className="flex justify-between text-slate-300">
+                <span>{stopsCount} Parada{stopsCount > 1 ? 's' : ''} Adicional{stopsCount > 1 ? 'is' : ''}:</span>
+                <span className="font-mono">{formatCurrency(pricing.stop_fee)}</span>
+              </div>
+            )}
+
+            {pricing.isNightApplied && (
+              <div className="flex items-center gap-1 text-[9px] text-[#a78bfa] bg-purple-500/5 px-2 py-1 rounded border border-purple-900/20 mt-1.5">
+                <Clock className="w-3 h-3 shrink-0" />
+                <span>Gravame de Horário Especial Iniciado</span>
+              </div>
+            )}
+
             {pricing.isMinimumApplied && (
-              <div className="flex items-center gap-1 text-[10px] text-amber-400 bg-amber-500/5 px-2 py-1 rounded border border-amber-900/10 mt-1">
+              <div className="flex items-center gap-1 text-[9px] text-amber-400 bg-amber-500/5 px-2 py-1 rounded border border-amber-900/20 mt-1.5">
                 <Info className="w-3 h-3 shrink-0" />
-                <span>Aplicada Tarifa Mínima de Viagem (R$ 30,00)</span>
+                <span>Aplicada Tarifa Mínima do Motorista ({formatCurrency(activeSettings.minimum_trip_price)})</span>
               </div>
             )}
 
             <hr className="border-purple-950 my-2" />
 
             <div className="flex justify-between items-baseline pt-1">
-              <span className="text-sm font-bold text-slate-250">Valor Estimado Total:</span>
+              <span className="text-sm font-bold text-slate-250 font-display">Valor Estimado Total:</span>
               <span className="text-xl font-extrabold font-display text-roxou-neon animate-pulse">
                 {formatCurrency(pricing.total)}
               </span>

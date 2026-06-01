@@ -4,7 +4,7 @@
  */
 
 import { createClient } from '@supabase/supabase-js';
-import { Profile, DriverStatus, DriverStatusType, RideRequest, RideMessage, RideStatus, TripType } from '../types';
+import { Profile, DriverStatus, DriverStatusType, RideRequest, RideMessage, RideStatus, TripType, Driver, DriverSettings } from '../types';
 
 // Detectar se as credenciais do Supabase estão configuradas
 const supabaseUrl = (import.meta as any).env.VITE_SUPABASE_URL || '';
@@ -29,6 +29,8 @@ const KEY_STATUS = 'roxou_driver_status';
 const KEY_RIDES = 'roxou_rides';
 const KEY_MESSAGES = 'roxou_messages';
 const KEY_CURRENT_USER = 'roxou_current_user';
+const KEY_DRIVERS = 'roxou_drivers';
+const KEY_DRIVER_SETTINGS = 'roxou_driver_settings';
 
 // Estado de Callbacks para simular "Realtime" local de forma reativa
 type CallbackFn = (...args: any[]) => void;
@@ -161,6 +163,106 @@ const initMockDB = () => {
     ];
     localStorage.setItem(KEY_MESSAGES, JSON.stringify(mockMessages));
   }
+
+  // Semente de Motoristas e Configurações de Precificação Roxou
+  if (!localStorage.getItem(KEY_DRIVERS)) {
+    const defaultDrivers = [
+      {
+        id: 'driver-1',
+        profile_id: 'admin-id-demo',
+        display_name: 'Carlos Roberto (Premium Black)',
+        photo_url: 'https://images.unsplash.com/photo-1560250097-0b93528c311a?auto=format&fit=crop&w=150&h=150&q=80',
+        vehicle_model: 'Audi A8 L Executive',
+        vehicle_plate: 'SP-992-B-HQ',
+        vehicle_photo_url: 'https://images.unsplash.com/photo-1603584173870-7f23fdae1b7a?auto=format&fit=crop&w=600&q=80',
+        status: 'online',
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString()
+      },
+      {
+        id: 'driver-2',
+        profile_id: null,
+        display_name: 'Mariana Alencar (Executive SUV)',
+        photo_url: 'https://images.unsplash.com/photo-1573496359142-b8d87734a5a2?auto=format&fit=crop&w=150&h=150&q=80',
+        vehicle_model: 'Volvo XC90 T8 Hybrid',
+        vehicle_plate: 'PR-374-X-EX',
+        vehicle_photo_url: 'https://images.unsplash.com/photo-1494976388531-d1058494cdd8?auto=format&fit=crop&w=600&q=80',
+        status: 'online',
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString()
+      },
+      {
+        id: 'driver-3',
+        profile_id: null,
+        display_name: 'Sérgio Ramos (Armored Mercedes)',
+        photo_url: 'https://images.unsplash.com/photo-1500648767791-00dcc994a43e?auto=format&fit=crop&w=150&h=150&q=80',
+        vehicle_model: 'Mercedes-Benz S-Class Blindado',
+        vehicle_plate: 'RJ-770-S-VIP',
+        vehicle_photo_url: 'https://images.unsplash.com/photo-1618843479313-40f8afb4b4d8?auto=format&fit=crop&w=600&q=80',
+        status: 'offline',
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString()
+      }
+    ];
+    localStorage.setItem(KEY_DRIVERS, JSON.stringify(defaultDrivers));
+  }
+
+  if (!localStorage.getItem(KEY_DRIVER_SETTINGS)) {
+    const defaultSettings = [
+      {
+        id: 'settings-1',
+        driver_id: 'driver-1',
+        fuel_price: 6.00,
+        vehicle_consumption_km_l: 10.0,
+        monthly_rent: 3000,
+        monthly_km_goal: 5000,
+        minimum_km_price: 2.00,
+        operational_margin_percent: 60,
+        displacement_percent: 15,
+        night_extra_percent: 25,
+        night_extra_start_time: '23:00',
+        minimum_trip_price: 40.00,
+        stop_fee: 15.00,
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString()
+      },
+      {
+        id: 'settings-2',
+        driver_id: 'driver-2',
+        fuel_price: 5.80,
+        vehicle_consumption_km_l: 12.0,
+        monthly_rent: 3500,
+        monthly_km_goal: 4000,
+        minimum_km_price: 2.50,
+        operational_margin_percent: 50,
+        displacement_percent: 10,
+        night_extra_percent: 20,
+        night_extra_start_time: '22:00',
+        minimum_trip_price: 50.00,
+        stop_fee: 20.00,
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString()
+      },
+      {
+        id: 'settings-3',
+        driver_id: 'driver-3',
+        fuel_price: 6.20,
+        vehicle_consumption_km_l: 8.0,
+        monthly_rent: 4000,
+        monthly_km_goal: 3000,
+        minimum_km_price: 3.50,
+        operational_margin_percent: 70,
+        displacement_percent: 20,
+        night_extra_percent: 30,
+        night_extra_start_time: '23:00',
+        minimum_trip_price: 80.00,
+        stop_fee: 30.00,
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString()
+      }
+    ];
+    localStorage.setItem(KEY_DRIVER_SETTINGS, JSON.stringify(defaultSettings));
+  }
 };
 
 // Rodar inicializador
@@ -213,6 +315,14 @@ function mapDbToRideRequest(db: any): RideRequest {
     rejection_reason: db.rejection_reason || null,
     created_at: db.created_at,
     updated_at: db.updated_at,
+    driver_id: db.driver_id || null,
+    stops: db.stops || [],
+    duration_minutes: db.duration_minutes || null,
+    base_price: db.base_price || null,
+    displacement_fee: db.displacement_fee || null,
+    night_fee: db.night_fee || null,
+    stop_fee: db.stop_fee || null,
+    price_breakdown: db.price_breakdown || null,
     profiles: db.profiles ? {
       id: db.profiles.id,
       email: db.profiles.email,
@@ -221,6 +331,18 @@ function mapDbToRideRequest(db: any): RideRequest {
       role: db.profiles.role,
       created_at: db.profiles.created_at || '',
       updated_at: db.profiles.updated_at || ''
+    } : undefined,
+    drivers: db.drivers ? {
+      id: db.drivers.id,
+      profile_id: db.drivers.profile_id,
+      display_name: db.drivers.display_name || db.drivers.name,
+      photo_url: db.drivers.photo_url,
+      vehicle_model: db.drivers.vehicle_model,
+      vehicle_plate: db.drivers.vehicle_plate,
+      vehicle_photo_url: db.drivers.vehicle_photo_url,
+      status: db.drivers.status,
+      created_at: db.drivers.created_at || '',
+      updated_at: db.drivers.updated_at || ''
     } : undefined
   };
 }
@@ -531,6 +653,14 @@ export const supabaseService = {
     observation: string | null;
     estimated_price: number;
     user_id: string;
+    driver_id?: string | null;
+    stops?: string[] | any;
+    duration_minutes?: number | null;
+    base_price?: number | null;
+    displacement_fee?: number | null;
+    night_fee?: number | null;
+    stop_fee?: number | null;
+    price_breakdown?: any;
   }): Promise<RideRequest | null> {
     const newRide: RideRequest = {
       id: isDemoMode ? 'ride-' + Math.random().toString(36).substr(2, 9) : undefined as any,
@@ -548,11 +678,29 @@ export const supabaseService = {
       status: 'pendente',
       rejection_reason: null,
       created_at: new Date().toISOString(),
-      updated_at: new Date().toISOString()
+      updated_at: new Date().toISOString(),
+      driver_id: data.driver_id || null,
+      stops: data.stops || [],
+      duration_minutes: data.duration_minutes || null,
+      base_price: data.base_price || null,
+      displacement_fee: data.displacement_fee || null,
+      night_fee: data.night_fee || null,
+      stop_fee: data.stop_fee || null,
+      price_breakdown: data.price_breakdown || null
     };
 
     if (isDemoMode) {
       const rides = JSON.parse(localStorage.getItem(KEY_RIDES) || '[]');
+      
+      // Carregar informações do motorista para o mock se tiver driver_id
+      if (data.driver_id) {
+        const drivers = JSON.parse(localStorage.getItem(KEY_DRIVERS) || '[]');
+        const targetDriver = drivers.find((d: any) => d.id === data.driver_id);
+        if (targetDriver) {
+          newRide.drivers = targetDriver;
+        }
+      }
+
       rides.unshift(newRide);
       localStorage.setItem(KEY_RIDES, JSON.stringify(rides));
       emitLocalEvent('rides_change');
@@ -574,7 +722,15 @@ export const supabaseService = {
         status: 'pendente',
         final_price: null,
         rejection_reason: null,
-        payment_confirmed: false
+        payment_confirmed: false,
+        driver_id: data.driver_id || null,
+        stops: data.stops || [],
+        duration_minutes: data.duration_minutes || null,
+        base_price: data.base_price || null,
+        displacement_fee: data.displacement_fee || null,
+        night_fee: data.night_fee || null,
+        stop_fee: data.stop_fee || null,
+        price_breakdown: data.price_breakdown || null
       };
 
       const { data: inserted, error } = await supabase!
@@ -598,11 +754,13 @@ export const supabaseService = {
     if (isDemoMode) {
       const rides: RideRequest[] = JSON.parse(localStorage.getItem(KEY_RIDES) || '[]');
       const profiles: Profile[] = JSON.parse(localStorage.getItem(KEY_PROFILES) || '[]');
+      const drivers: Driver[] = JSON.parse(localStorage.getItem(KEY_DRIVERS) || '[]');
       
-      // Mapear profiles neles
+      // Mapear profiles e drivers neles
       const fullRides = rides.map(r => ({
         ...r,
-        profiles: profiles.find(p => p.id === r.user_id)
+        profiles: profiles.find(p => p.id === r.user_id),
+        drivers: drivers.find(d => d.id === r.driver_id)
       }));
 
       if (userRole === 'admin') {
@@ -615,10 +773,10 @@ export const supabaseService = {
     }
 
     try {
-      // Usar joion em profiles utilizando a relação de passenger_id para evitar incompatibilidades
+      // Usar join em profiles e drivers utilizando a relação de passenger_id para evitar incompatibilidades
       let query = supabase!
         .from('ride_requests')
-        .select('*, profiles:passenger_id(*)');
+        .select('*, profiles:passenger_id(*), drivers:driver_id(*)');
 
       if (userRole !== 'admin') {
         query = query.eq('passenger_id', userId);
@@ -642,7 +800,9 @@ export const supabaseService = {
       const ride = rides.find(r => r.id === id) || null;
       if (ride) {
         const profiles: Profile[] = JSON.parse(localStorage.getItem(KEY_PROFILES) || '[]');
+        const drivers: Driver[] = JSON.parse(localStorage.getItem(KEY_DRIVERS) || '[]');
         ride.profiles = profiles.find(p => p.id === ride.user_id);
+        ride.drivers = drivers.find(d => d.id === ride.driver_id);
       }
       return ride;
     }
@@ -650,7 +810,7 @@ export const supabaseService = {
     try {
       const { data, error } = await supabase!
         .from('ride_requests')
-        .select('*, profiles:passenger_id(*)')
+        .select('*, profiles:passenger_id(*), drivers:driver_id(*)')
         .eq('id', id)
         .maybeSingle();
 
@@ -865,5 +1025,148 @@ export const supabaseService = {
     return () => {
       supabase!.removeChannel(channel);
     };
+  },
+
+  // --- MOTORISTAS E CONFIGURAÇÕES DE PRECIFICAÇÃO ROXOU ---
+  async getDrivers(): Promise<Driver[]> {
+    if (isDemoMode) {
+      const driversStr = localStorage.getItem(KEY_DRIVERS) || '[]';
+      return JSON.parse(driversStr);
+    }
+    try {
+      const { data, error } = await supabase!
+        .from('drivers')
+        .select('*');
+      if (error) {
+        console.error('Erro ao buscar motoristas reais:', error);
+        return [];
+      }
+      return data as Driver[];
+    } catch (err) {
+      console.error('Exceção ao buscar motoristas reais:', err);
+      return [];
+    }
+  },
+
+  async getDriverSettings(driverId: string): Promise<DriverSettings | null> {
+    if (isDemoMode) {
+      const settingsStr = localStorage.getItem(KEY_DRIVER_SETTINGS) || '[]';
+      const settingsList: DriverSettings[] = JSON.parse(settingsStr);
+      return settingsList.find(s => s.driver_id === driverId) || null;
+    }
+    try {
+      const { data, error } = await supabase!
+        .from('driver_settings')
+        .select('*')
+        .eq('driver_id', driverId)
+        .maybeSingle();
+      if (error) {
+        console.error('Erro ao buscar configurações do motorista:', error);
+        return null;
+      }
+      return data as DriverSettings;
+    } catch (err) {
+       console.error('Exceção ao buscar configurações do motorista:', err);
+       return null;
+    }
+  },
+
+  async updateDriverSettings(driverId: string, settings: Partial<DriverSettings>): Promise<boolean> {
+    if (isDemoMode) {
+      const settingsStr = localStorage.getItem(KEY_DRIVER_SETTINGS) || '[]';
+      const settingsList: DriverSettings[] = JSON.parse(settingsStr);
+      const index = settingsList.findIndex(s => s.driver_id === driverId);
+      if (index !== -1) {
+        settingsList[index] = {
+          ...settingsList[index],
+          ...settings,
+          updated_at: new Date().toISOString()
+        };
+      } else {
+        const newSettings: DriverSettings = {
+          id: 'settings-' + Math.random().toString(36).substr(2, 9),
+          driver_id: driverId,
+          fuel_price: settings.fuel_price ?? 6.00,
+          vehicle_consumption_km_l: settings.vehicle_consumption_km_l ?? 10.0,
+          monthly_rent: settings.monthly_rent ?? 3000,
+          monthly_km_goal: settings.monthly_km_goal ?? 5000,
+          minimum_km_price: settings.minimum_km_price ?? 2.00,
+          operational_margin_percent: settings.operational_margin_percent ?? 60,
+          displacement_percent: settings.displacement_percent ?? 15,
+          night_extra_percent: settings.night_extra_percent ?? 25,
+          night_extra_start_time: settings.night_extra_start_time ?? '23:00',
+          minimum_trip_price: settings.minimum_trip_price ?? 40.00,
+          stop_fee: settings.stop_fee ?? 15.00,
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString()
+        };
+        settingsList.push(newSettings);
+      }
+      localStorage.setItem(KEY_DRIVER_SETTINGS, JSON.stringify(settingsList));
+      emitLocalEvent('driver_settings_change');
+      return true;
+    }
+    try {
+      const { data: existing } = await supabase!
+        .from('driver_settings')
+        .select('id')
+        .eq('driver_id', driverId)
+        .maybeSingle();
+
+      let query;
+      const updated_at = new Date().toISOString();
+      if (existing) {
+        query = supabase!
+          .from('driver_settings')
+          .update({ ...settings, updated_at })
+          .eq('driver_id', driverId);
+      } else {
+        query = supabase!
+          .from('driver_settings')
+          .insert({
+            driver_id: driverId,
+            ...settings,
+            created_at: updated_at,
+            updated_at
+          });
+      }
+      const { error } = await query;
+      return !error;
+    } catch (err) {
+      console.error('Exceção ao atualizar configurações do motorista:', err);
+      return false;
+    }
+  },
+
+  async updateDriver(driverId: string, updates: Partial<Driver>): Promise<boolean> {
+    if (isDemoMode) {
+      const driversStr = localStorage.getItem(KEY_DRIVERS) || '[]';
+      const driversList: Driver[] = JSON.parse(driversStr);
+      const index = driversList.findIndex(d => d.id === driverId);
+      if (index !== -1) {
+        driversList[index] = {
+          ...driversList[index],
+          ...updates,
+          updated_at: new Date().toISOString()
+        };
+        localStorage.setItem(KEY_DRIVERS, JSON.stringify(driversList));
+        emitLocalEvent('drivers_change');
+        return true;
+      }
+      return false;
+    }
+    try {
+      const { error } = await supabase!
+        .from('drivers')
+        .update({
+          ...updates,
+          updated_at: new Date().toISOString()
+        })
+        .eq('id', driverId);
+      return !error;
+    } catch (err) {
+      console.error('Exceção ao atualizar motorista:', err);
+      return false;
+    }
   }
 };

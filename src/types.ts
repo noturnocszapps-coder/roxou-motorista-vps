@@ -57,6 +57,48 @@ export interface RideRequest {
   
   // Campo opcional para carregar informações do perfil com a solicitação
   profiles?: Profile;
+
+  // Lógica Profissional de Precificação Roxou
+  driver_id?: string | null;
+  stops?: string[] | any; // JSONB no banco, array ou string no front
+  duration_minutes?: number | null;
+  base_price?: number | null;
+  displacement_fee?: number | null;
+  night_fee?: number | null;
+  stop_fee?: number | null;
+  price_breakdown?: any; // JSONB contendo o detalhamento de custos
+  drivers?: Driver; // Relação opcional com motoristas
+}
+
+export interface Driver {
+  id: string;
+  profile_id?: string | null;
+  display_name: string;
+  photo_url: string;
+  vehicle_model: string;
+  vehicle_plate: string;
+  vehicle_photo_url: string;
+  status: DriverStatusType;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface DriverSettings {
+  id: string;
+  driver_id: string;
+  fuel_price: number;
+  vehicle_consumption_km_l: number;
+  monthly_rent: number;
+  monthly_km_goal: number;
+  minimum_km_price: number;
+  operational_margin_percent: number;
+  displacement_percent: number;
+  night_extra_percent: number;
+  night_extra_start_time: string; // e.g. "23:00"
+  minimum_trip_price: number;
+  stop_fee: number;
+  created_at: string;
+  updated_at: string;
 }
 
 export interface RideMessage {

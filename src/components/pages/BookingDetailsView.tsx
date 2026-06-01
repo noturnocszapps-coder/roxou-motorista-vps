@@ -24,7 +24,8 @@ import {
   Info,
   Car,
   AlertOctagon,
-  LifeBuoy
+  LifeBuoy,
+  ShieldCheck
 } from 'lucide-react';
 
 interface DetailsProps {
@@ -328,6 +329,81 @@ export function BookingDetailsView({ rideId, currentUser }: DetailsProps) {
           </div>
         )}
       </div>
+
+      {/* Informações do Motorista & Precificação Detalhada do Chauffeur */}
+      {ride.drivers && (
+        <div className="bg-roxou-card border border-slate-850 rounded-2xl p-4 text-left space-y-4">
+          <div className="flex items-center gap-2">
+            <ShieldCheck className="w-4 h-4 text-roxou-neon" />
+            <h3 className="text-[10px] uppercase font-bold text-slate-400 tracking-wider">Chauffeur Luxo Designado</h3>
+          </div>
+
+          <div className="flex items-center gap-3 bg-slate-950/40 border border-slate-900/60 rounded-xl p-3">
+            <img
+              src={ride.drivers.photo_url || "https://images.unsplash.com/photo-1544005313-94ddf0286df2?auto=format&fit=crop&w=60&h=60&q=80"}
+              alt={ride.drivers.display_name}
+              referrerPolicy="no-referrer"
+              className="w-11 h-11 rounded-full object-cover border border-slate-800 shrink-0"
+            />
+            <div className="flex-1 min-w-0 text-left">
+              <p className="text-xs font-bold text-white truncate">{ride.drivers.display_name}</p>
+              <p className="text-[10px] text-slate-400 mt-0.5 truncate">{ride.drivers.vehicle_model} • <span className="font-mono text-slate-350">{ride.drivers.vehicle_plate}</span></p>
+              <div className="flex items-center gap-1.5 mt-1">
+                <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
+                <span className="text-[9px] text-slate-400">Atendimento Corporativo VIP</span>
+              </div>
+            </div>
+          </div>
+
+          {/* Se houver preço detalhado, exibir o memorial de cálculo realista */}
+          {ride.base_price !== undefined && ride.base_price !== null && (
+            <div className="bg-slate-950/25 border border-slate-900 rounded-xl p-3 space-y-1.5 text-[11px] font-sans">
+              <p className="text-[9px] tracking-wider font-semibold text-roxou-neon uppercase mb-2">Detalhamento Financeiro Cláusula Roxou</p>
+              
+              <div className="flex justify-between text-slate-400">
+                <span>Translado Base {ride.distance_km} Km:</span>
+                <span className="font-mono text-slate-205">{formatCurrency(ride.base_price)}</span>
+              </div>
+
+              {Number(ride.displacement_fee) > 0 && (
+                <div className="flex justify-between text-slate-400">
+                  <span>Adicional de Escopo / Mobilização:</span>
+                  <span className="font-mono text-slate-205">{formatCurrency(Number(ride.displacement_fee))}</span>
+                </div>
+              )}
+
+              {Number(ride.night_fee) > 0 && (
+                <div className="flex justify-between text-indigo-300">
+                  <span>Adicional Noturno Executivo:</span>
+                  <span className="font-mono">{formatCurrency(Number(ride.night_fee))}</span>
+                </div>
+              )}
+
+              {Number(ride.stop_fee) > 0 && (
+                <div className="flex justify-between text-slate-400">
+                  <span>Adicional de Paradas Intermediárias:</span>
+                  <span className="font-mono text-slate-205">{formatCurrency(Number(ride.stop_fee))}</span>
+                </div>
+              )}
+
+              {ride.price_breakdown?.isMinimumApplied && (
+                <div className="text-[9px] text-amber-500 bg-amber-500/5 px-2 py-1 rounded border border-amber-900/10 mt-1">
+                  Nota: Aplicada tarifa mínima imposta contratualmente por este motorista.
+                </div>
+              )}
+
+              <hr className="border-slate-800 my-1.5" />
+
+              <div className="flex justify-between items-baseline pt-0.5">
+                <span className="text-xs font-bold text-slate-200">Subtotal do Orçamento Realista:</span>
+                <span className="text-sm font-extrabold font-display text-roxou-neon">
+                  {formatCurrency(ride.final_price || ride.estimated_price)}
+                </span>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
 
       {/* ==========================================
           PAINEL DE AÇÃO CONTEXTUAL (PASSAGEIRO)

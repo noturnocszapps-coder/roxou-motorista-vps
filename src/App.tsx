@@ -18,8 +18,6 @@ const CreateRequestView = lazy(() => import('./components/pages/CreateRequestVie
 const MyBookingsView = lazy(() => import('./components/pages/MyBookingsView'));
 const BookingDetailsView = lazy(() => import('./components/pages/BookingDetailsView'));
 const AdminDashboardView = lazy(() => import('./components/pages/AdminDashboardView'));
-const AdminAgendaView = lazy(() => import('./components/pages/AdminAgendaView'));
-const AdminSettingsView = lazy(() => import('./components/pages/AdminSettingsView'));
 
 import { ShieldAlert, Car, Loader } from 'lucide-react';
 
@@ -129,21 +127,17 @@ export default function App() {
   } else if (detailMatch.matches) {
     const { id } = detailMatch.params;
     pageContent = <BookingDetailsView rideId={id} currentUser={currentUser} />;
-  } else if (currentPath === '/admin') {
+  } else if (
+    currentPath === '/admin' ||
+    currentPath === '/admin/solicitacoes' ||
+    currentPath === '/admin/agenda' ||
+    currentPath === '/admin/clientes' ||
+    currentPath === '/admin/motoristas' ||
+    currentPath === '/admin/financeiro' ||
+    currentPath === '/admin/configuracoes'
+  ) {
     if (currentUser.role === 'admin') {
       pageContent = <AdminDashboardView currentUser={currentUser} onRefreshUser={refreshUserData} />;
-    } else {
-      pageContent = <AccessDeniedScreen />;
-    }
-  } else if (currentPath === '/admin/agenda') {
-    if (currentUser.role === 'admin') {
-      pageContent = <AdminAgendaView currentUser={currentUser} />;
-    } else {
-      pageContent = <AccessDeniedScreen />;
-    }
-  } else if (currentPath === '/admin/configuracoes') {
-    if (currentUser.role === 'admin') {
-      pageContent = <AdminSettingsView currentUser={currentUser} />;
     } else {
       pageContent = <AccessDeniedScreen />;
     }
@@ -164,6 +158,34 @@ export default function App() {
     );
   }
 
+  const isAdminPath = currentUser?.role === 'admin' && (
+    currentPath === '/' ||
+    currentPath.startsWith('/admin') ||
+    currentPath.startsWith('/reserva')
+  );
+
+  if (isAdminPath) {
+    return (
+      <div className="w-full min-h-screen bg-[#07070a] text-[#f3f4f6] relative font-sans antialiased overflow-x-hidden flex flex-col justify-start">
+        {/* Header reativo para ambiente de demonstração */}
+        <DemoHeader currentUser={currentUser} onRefreshUser={refreshUserData} />
+        
+        {/* Renderização da Página Atual no formato full-width para SaaS */}
+        <div className="flex-grow w-full flex flex-col">
+          <Suspense fallback={
+            <div className="h-[60vh] flex flex-col items-center justify-center text-slate-400 gap-3">
+              <Loader className="w-6 h-6 text-roxou-purple animate-spin" />
+              <span className="text-[11px] font-medium text-slate-500">Conectando ao painel executivo...</span>
+            </div>
+          }>
+            {pageContent}
+          </Suspense>
+        </div>
+      </div>
+    );
+  }
+
+  // Se não for admin, exibe a interface dentro do mockup celular para o Passageiro
   return (
     <div className="w-full min-h-screen bg-[#08070d] flex items-center justify-center">
       {/* Contêiner Estilo Celular Centralizado no Desktop */}
