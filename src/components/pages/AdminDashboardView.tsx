@@ -187,8 +187,11 @@ export function AdminDashboardView({ currentUser, onRefreshUser }: AdminProps) {
   // Carregar os parâmetros do motorista selecionado
   useEffect(() => {
     if (!selectedDriverId) return;
-    async function loadDriverPricing() {
+    async function loadDriverPricingAndStatus() {
       try {
+        const status = await supabaseService.getDriverStatus(selectedDriverId);
+        setDriverStatus(status);
+
         const settings = await supabaseService.getDriverSettings(selectedDriverId);
         if (settings) {
           setPricingSettings(settings);
@@ -212,18 +215,27 @@ export function AdminDashboardView({ currentUser, onRefreshUser }: AdminProps) {
           });
         }
       } catch (err) {
-        console.error('Erro ao buscar parâmetros:', err);
+        console.error('Erro ao buscar parâmetros e status:', err);
       }
     }
-    loadDriverPricing();
+    loadDriverPricingAndStatus();
     setPricingMessage(null);
   }, [selectedDriverId]);
 
   // Carregar dados de solicitações reais e presença do motorista
   async function loadData() {
     try {
-      const status = await supabaseService.getDriverStatus(currentUser.id);
-      setDriverStatus(status);
+      if (selectedDriverId) {
+        const status = await supabaseService.getDriverStatus(selectedDriverId);
+        setDriverStatus(status);
+      } else {
+        const list = await supabaseService.getDrivers();
+        if (list.length > 0) {
+          const firstDriverId = list[0].id;
+          const status = await supabaseService.getDriverStatus(firstDriverId);
+          setDriverStatus(status);
+        }
+      }
 
       const allRides = await supabaseService.getRideRequests('admin', currentUser.id);
       setRides(allRides);
@@ -246,7 +258,7 @@ export function AdminDashboardView({ currentUser, onRefreshUser }: AdminProps) {
     return () => {
       unsubscribeRides();
     };
-  }, [currentUser.id]);
+  }, [currentUser.id, selectedDriverId]);
 
   // Sugestão de valor por KM calculada dinamicamente com base em custos reais
   const suggestedValuePerKm = useMemo(() => {
