@@ -24,7 +24,9 @@ import { ShieldAlert, Car, Loader } from 'lucide-react';
 export default function App() {
   const { currentPath, matchRoute } = useLocation();
   const [currentUser, setCurrentUser] = useState<Profile | null>(null);
-  const [authLoading, setAuthLoading] = useState(true);
+  const [loadingAuth, setLoadingAuth] = useState(true);
+
+  const user = currentUser;
 
   // Carregar e sincronizar usuário logado com logs temporários e controle robusto de carregamento
   const refreshUserData = async () => {
@@ -36,14 +38,16 @@ export default function App() {
         setCurrentUser(liveUser);
       } else {
         console.log('[AUTH] profile failed (null/not found)');
-        setCurrentUser(null);
+        // Nunca deslogar por timeout temporário ou falha se já houver um usuário carregado
+        setCurrentUser(prevUser => prevUser || null);
       }
     } catch (e) {
       console.error('[AUTH] profile failed with exception during login check:', e);
-      setCurrentUser(null);
+      // Nunca deslogar por timeout temporário ou falha se já houver um usuário carregado
+      setCurrentUser(prevUser => prevUser || null);
     } finally {
       console.log('[AUTH] loading finished');
-      setAuthLoading(false);
+      setLoadingAuth(false);
     }
   };
 
@@ -51,16 +55,16 @@ export default function App() {
     refreshUserData();
 
     // Ouvinte para reatividade de login e deslogin
-    const unsubscribe = supabaseService.subscribeToAuth((user) => {
+    const unsubscribe = supabaseService.subscribeToAuth((loadedUser) => {
       console.log('[AUTH] session loaded from subscription event');
-      if (user) {
-        console.log('[AUTH] profile loaded via subscription:', user.email);
-        setCurrentUser(user);
+      if (loadedUser) {
+        console.log('[AUTH] profile loaded via subscription:', loadedUser.email);
+        setCurrentUser(loadedUser);
       } else {
         console.log('[AUTH] profile failed / session null via subscription');
         setCurrentUser(null);
       }
-      setAuthLoading(false);
+      setLoadingAuth(false);
     });
 
     return () => {
@@ -70,14 +74,14 @@ export default function App() {
 
   // Proteger Rotas e Redirecionamentos se deslogado
   useEffect(() => {
-    if (authLoading) return;
+    if (loadingAuth) return;
     
-    if (!currentUser && currentPath !== '/login') {
+    if (loadingAuth === false && !user && currentPath !== '/login') {
       navigate('/login');
     }
-  }, [currentUser, currentPath, authLoading]);
+  }, [user, currentPath, loadingAuth]);
 
-  if (authLoading) {
+  if (loadingAuth) {
     return (
       <div className="min-h-screen bg-[#07060b] flex flex-col items-center justify-center text-slate-400 gap-3">
         <div className="w-12 h-12 bg-[#12101b] border border-roxou-purple/30 rounded-2xl flex items-center justify-center shadow-neon-purple/20">
@@ -92,12 +96,12 @@ export default function App() {
   }
 
   // Se o usuário tentar acessar qualquer rota deslogado, forçar exibição do login
-  if (!currentUser || currentPath === '/login') {
+  if (!user || currentPath === '/login') {
     return (
       <div className="w-full min-h-screen bg-[#08070d] flex flex-col justify-start">
-        <DemoHeader currentUser={currentUser} onRefreshUser={refreshUserData} />
+        <DemoHeader currentUser={user} onRefreshUser={refreshUserData} />
         <div className="flex-grow w-full flex items-center justify-center">
-          <LoginView currentUser={currentUser} onRefreshUser={refreshUserData} />
+          <LoginView currentUser={user} onRefreshUser={refreshUserData} />
         </div>
       </div>
     );
