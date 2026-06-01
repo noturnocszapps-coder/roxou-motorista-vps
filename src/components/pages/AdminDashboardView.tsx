@@ -222,7 +222,7 @@ export function AdminDashboardView({ currentUser, onRefreshUser }: AdminProps) {
   // Carregar dados de solicitações reais e presença do motorista
   async function loadData() {
     try {
-      const status = await supabaseService.getDriverStatus();
+      const status = await supabaseService.getDriverStatus(currentUser.id);
       setDriverStatus(status);
 
       const allRides = await supabaseService.getRideRequests('admin', currentUser.id);
@@ -270,7 +270,7 @@ export function AdminDashboardView({ currentUser, onRefreshUser }: AdminProps) {
   const handleChangeStatus = async (newStatus: DriverStatusType) => {
     setUpdatingStatus(true);
     try {
-      const success = await supabaseService.updateDriverStatus(newStatus, currentUser.id);
+      const success = await supabaseService.updateDriverStatus(currentUser.id, newStatus);
       if (success) {
         setDriverStatus(prev => prev ? { ...prev, status: newStatus, updated_at: new Date().toISOString() } : null);
       }

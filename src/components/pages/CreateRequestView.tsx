@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { supabaseService } from '../../lib/supabase';
 import { Profile, TripType, Driver, DriverSettings } from '../../types';
 import { calculateRideEstimate, formatCurrency } from '../../lib/pricing';
@@ -36,9 +36,18 @@ export function CreateRequestView({ currentUser }: CreateProps) {
 
   // Estados para Precificação Realista por Motorista Particular
   const [drivers, setDrivers] = useState<Driver[]>([]);
+  const [onlyOnline, setOnlyOnline] = useState<boolean>(true);
   const [selectedDriverId, setSelectedDriverId] = useState<string>('');
   const [selectedDriverSettings, setSelectedDriverSettings] = useState<DriverSettings | null>(null);
   const [stopsCount, setStopsCount] = useState<number>(0);
+
+  // Computação de motoristas exibidos (filtrados por status online se habilitado)
+  const displayedDrivers = useMemo(() => {
+    if (onlyOnline) {
+      return drivers.filter(d => d.status === 'online');
+    }
+    return drivers;
+  }, [drivers, onlyOnline]);
 
   // Buscar motoristas cadastrados
   useEffect(() => {
@@ -46,15 +55,24 @@ export function CreateRequestView({ currentUser }: CreateProps) {
       try {
         const list = await supabaseService.getDrivers();
         setDrivers(list);
-        if (list.length > 0) {
-          setSelectedDriverId(list[0].id);
-        }
       } catch (e) {
         console.error('Erro ao buscar motoristas executivos', e);
       }
     }
     fetchDrivers();
   }, []);
+
+  // Selecionar de forma inteligente o primeiro motorista disponível se o ID selecionado sumir
+  useEffect(() => {
+    if (displayedDrivers.length > 0) {
+      const exists = displayedDrivers.some(d => d.id === selectedDriverId);
+      if (!exists) {
+        setSelectedDriverId(displayedDrivers[0].id);
+      }
+    } else {
+      setSelectedDriverId('');
+    }
+  }, [displayedDrivers, selectedDriverId]);
 
   // Buscar tarifas do motorista selecionado
   useEffect(() => {
@@ -238,18 +256,34 @@ export function CreateRequestView({ currentUser }: CreateProps) {
           </p>
           
           <div className="space-y-3">
-            <label className="text-[10px] text-slate-400 font-semibold uppercase tracking-wider block mb-0.5">Selecione o Profissional</label>
+            <div className="flex justify-between items-center">
+              <label className="text-[10px] text-slate-400 font-semibold uppercase tracking-wider">Selecione o Profissional</label>
+              <label className="flex items-center gap-1.5 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={onlyOnline}
+                  onChange={(e) => setOnlyOnline(e.target.checked)}
+                  className="w-3.5 h-3.5 rounded border-slate-700 bg-slate-900 text-roxou-purple focus:ring-0 focus:ring-offset-0 cursor-pointer accent-[#a78bfa]"
+                />
+                <span className="text-[9px] font-extrabold text-slate-400 tracking-wide uppercase hover:text-white transition">Apenas Online</span>
+              </label>
+            </div>
+            
             <div className="relative">
               <select
                 value={selectedDriverId}
                 onChange={(e) => setSelectedDriverId(e.target.value)}
                 className="w-full bg-slate-900 border border-slate-800 rounded-xl px-3 py-2.5 text-xs text-slate-100 focus:outline-none focus:border-roxou-purple appearance-none cursor-pointer"
               >
-                {drivers.map(d => (
-                  <option key={d.id} value={d.id} className="bg-[#12101b]">
-                    {d.display_name} - {d.vehicle_model}
-                  </option>
-                ))}
+                {displayedDrivers.length === 0 ? (
+                  <option value="" className="bg-[#12101b]">Nenhum motorista online disponível</option>
+                ) : (
+                  displayedDrivers.map(d => (
+                    <option key={d.id} value={d.id} className="bg-[#12101b]">
+                      {d.display_name} - {d.vehicle_model} ({d.status ? d.status.toUpperCase() : 'OFFLINE'})
+                    </option>
+                  ))
+                )}
               </select>
             </div>
 
