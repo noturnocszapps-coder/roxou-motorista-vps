@@ -3,9 +3,9 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState, useEffect, lazy, Suspense } from 'react';
+import React, { useState, useEffect, useMemo, useRef, lazy, Suspense } from 'react';
 import { useLocation, navigate } from './lib/navigation';
-import { supabaseService } from './lib/supabase';
+import { supabaseService, isDemoMode, supabase } from './lib/supabase';
 import { Profile } from './types';
 import { DemoHeader } from './components/DemoHeader';
 
@@ -23,28 +23,90 @@ import { ShieldAlert, Car, Loader } from 'lucide-react';
 
 export default function App() {
   const { currentPath, matchRoute } = useLocation();
-  const [currentUser, setCurrentUser] = useState<Profile | null>(null);
+  const [authUser, setAuthUser] = useState<any>(null);
+  const [profile, setProfile] = useState<Profile | null>(null);
   const [loadingAuth, setLoadingAuth] = useState(true);
+  const wasAuthenticated = useRef(false);
+
+  // Computa o usuário atual considerando o profile real ou o fallback seguro feito em useMemo
+  const currentUser = useMemo(() => {
+    if (profile) return profile;
+    if (authUser) {
+      console.log('[AUTH] profile failed, using fallback');
+      const fallbackRole = authUser.email === 'contato.fh3@gmail.com' ? 'admin' : 'passageiro';
+      return {
+        id: authUser.id,
+        email: authUser.email || '',
+        full_name: authUser.user_metadata?.full_name || authUser.user_metadata?.name || authUser.email?.split('@')[0] || 'Passageiro',
+        avatar_url: authUser.user_metadata?.avatar_url || null,
+        role: fallbackRole,
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString()
+      } as Profile;
+    }
+    return null;
+  }, [profile, authUser]);
 
   const user = currentUser;
 
   // Carregar e sincronizar usuário logado com logs temporários e controle robusto de carregamento
   const refreshUserData = async () => {
     console.log('[AUTH] start');
+    
+    // Modo local / demonstração
+    if (isDemoMode) {
+      try {
+        const liveUser = await supabaseService.getCurrentUser();
+        if (liveUser) {
+          console.log('[AUTH] profile loaded:', liveUser.email);
+          setProfile(liveUser);
+          setAuthUser(liveUser);
+          wasAuthenticated.current = true;
+        } else {
+          console.log('[AUTH] profile failed (null/not found)');
+        }
+      } catch (err) {
+        console.error('[AUTH] demo user load error:', err);
+      } finally {
+        setLoadingAuth(false);
+      }
+      return;
+    }
+
+    // Modo real do Supabase
     try {
-      const liveUser = await supabaseService.getCurrentUser();
-      if (liveUser) {
-        console.log('[AUTH] profile loaded:', liveUser.email);
-        setCurrentUser(liveUser);
+      if (!supabase) {
+        console.warn('[AUTH] supabase client not initialized');
+        setLoadingAuth(false);
+        return;
+      }
+
+      const { data: { user: sUser }, error: userError } = await supabase.auth.getUser();
+      if (sUser) {
+        console.log('[AUTH] auth user valid, keeping session');
+        setAuthUser(sUser);
+        wasAuthenticated.current = true;
+
+        // Tentar buscar perfil correspondente no banco
+        try {
+          const liveUser = await supabaseService.getCurrentUser();
+          if (liveUser) {
+            console.log('[AUTH] profile loaded:', liveUser.email);
+            setProfile(liveUser);
+          } else {
+            console.warn('[AUTH] profile failed, using fallback');
+          }
+        } catch (profileErr) {
+          console.warn('[AUTH] erro ao recuperar o perfil do usuário (warning):', profileErr);
+          console.warn('[AUTH] profile failed, using fallback');
+        }
       } else {
-        console.log('[AUTH] profile failed (null/not found)');
-        // Nunca deslogar por timeout temporário ou falha se já houver um usuário carregado
-        setCurrentUser(prevUser => prevUser || null);
+        console.log('[AUTH] session null, no auth user');
+        setAuthUser(null);
+        setProfile(null);
       }
     } catch (e) {
       console.error('[AUTH] profile failed with exception during login check:', e);
-      // Nunca deslogar por timeout temporário ou falha se já houver um usuário carregado
-      setCurrentUser(prevUser => prevUser || null);
     } finally {
       console.log('[AUTH] loading finished');
       setLoadingAuth(false);
@@ -55,14 +117,27 @@ export default function App() {
     refreshUserData();
 
     // Ouvinte para reatividade de login e deslogin
-    const unsubscribe = supabaseService.subscribeToAuth((loadedUser) => {
-      console.log('[AUTH] session loaded from subscription event');
-      if (loadedUser) {
-        console.log('[AUTH] profile loaded via subscription:', loadedUser.email);
-        setCurrentUser(loadedUser);
+    const unsubscribe = supabaseService.subscribeToAuth((loadedAuthUser, loadedProfile, event) => {
+      console.log('[AUTH] session loaded from subscription event:', event);
+      if (loadedAuthUser) {
+        console.log('[AUTH] auth user valid, keeping session');
+        setAuthUser(loadedAuthUser);
+        wasAuthenticated.current = true;
+        if (loadedProfile) {
+          setProfile(loadedProfile);
+        } else {
+          console.warn('[AUTH] profile failed, using fallback');
+        }
       } else {
-        console.log('[AUTH] profile failed / session null via subscription');
-        setCurrentUser(null);
+        if (event === 'SIGNED_OUT' || event === 'INITIAL_SESSION') {
+          if (wasAuthenticated.current || event === 'SIGNED_OUT') {
+            console.error('[AUTH REDIRECT]', `Sessão inválida ou deslogada no evento ${event}.`);
+          } else {
+            console.warn('[AUTH INFO]', `Sem sessão ativa inicialmente no evento ${event}.`);
+          }
+          setAuthUser(null);
+          setProfile(null);
+        }
       }
       setLoadingAuth(false);
     });
@@ -72,14 +147,19 @@ export default function App() {
     };
   }, []);
 
-  // Proteger Rotas e Redirecionamentos se deslogado
+  // Proteger Rotas e Redirecionamentos se deslogado (apenas se authUser realmente não existir!)
   useEffect(() => {
     if (loadingAuth) return;
     
-    if (loadingAuth === false && !user && currentPath !== '/login') {
+    if (loadingAuth === false && !authUser && currentPath !== '/login') {
+      if (wasAuthenticated.current) {
+        console.error('[AUTH REDIRECT]', `Usuário não autenticado (no authUser) tentando acessar ${currentPath}. Forçando /login`);
+      } else {
+        console.warn('[AUTH INFO]', `Acesso inicial à rota protegida ${currentPath} sem sessão ativa. Redirecionando para /login`);
+      }
       navigate('/login');
     }
-  }, [user, currentPath, loadingAuth]);
+  }, [authUser, currentPath, loadingAuth]);
 
   if (loadingAuth) {
     return (
@@ -96,7 +176,7 @@ export default function App() {
   }
 
   // Se o usuário tentar acessar qualquer rota deslogado, forçar exibição do login
-  if (!user || currentPath === '/login') {
+  if (!authUser || currentPath === '/login') {
     return (
       <div className="w-full min-h-screen bg-[#08070d] flex flex-col justify-start">
         <DemoHeader currentUser={user} onRefreshUser={refreshUserData} />

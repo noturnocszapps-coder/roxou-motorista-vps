@@ -251,6 +251,7 @@ export function AdminDashboardView({ currentUser, onRefreshUser }: AdminProps) {
       if (supabase) {
         await supabase.auth.signOut();
       }
+      console.error('[AUTH REDIRECT]', 'Usuário clicou em Sair da Conta a partir do Painel de Admin.');
       navigate('/login');
       window.location.reload();
     } catch (err) {

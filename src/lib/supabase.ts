@@ -417,6 +417,7 @@ export const supabaseService = {
         console.log('[AUTH] session loaded for user:', user.email);
 
         // Buscar perfil correspondente no banco usando maybeSingle() para evitar erro de Content Negotiation 406
+        console.log('[SUPABASE QUERY]', 'profiles');
         const { data: profile, error } = await supabase
           .from('profiles')
           .select('*')
@@ -425,7 +426,7 @@ export const supabaseService = {
 
         if (error) {
           console.warn('[AUTH] Erro ao buscar perfil com maybeSingle:', error);
-          console.log('[AUTH] profile failed');
+          console.warn('[AUTH] profile failed');
         }
 
         if (!profile) {
@@ -439,6 +440,7 @@ export const supabaseService = {
           };
 
           // Usa insert em vez de upsert para evitar erros de RLS e triggers de actualização (400 Bad Request)
+          console.log('[SUPABASE QUERY]', 'profiles');
           const { data: insertedProfile, error: insertError } = await supabase
             .from('profiles')
             .insert(newProfile)
@@ -448,6 +450,7 @@ export const supabaseService = {
           if (insertError) {
             console.log('[AUTH] Inserção direta falhou/ignorada:', insertError);
             // Recarregar perfil novamente
+            console.log('[SUPABASE QUERY]', 'profiles');
             const { data: reloadedProfile } = await supabase
               .from('profiles')
               .select('*')
@@ -464,21 +467,21 @@ export const supabaseService = {
         console.log('[AUTH] profile loaded:', profile.email);
         return profile as Profile;
       } catch (e) {
-        console.error('[AUTH] erro interno no fetchUserPromise:', e);
-        console.log('[AUTH] profile failed with exception');
+        console.warn('[AUTH] erro interno no fetchUserPromise (profile failed as warning):', e);
+        console.warn('[AUTH] profile failed with exception');
         return null;
       }
     };
 
-    // Timeout de segurança de no máximo 5 segundos
+    // Timeout de segurança de no máximo 15 segundos
     return Promise.race([
       fetchUserPromise(),
       new Promise<Profile | null>((resolve) => {
         setTimeout(() => {
-          console.warn('[AUTH] timeout de 5 segundos atingido ao buscar usuário do Supabase');
-          console.log('[AUTH] profile failed (timeout)');
+          console.warn('[AUTH] timeout de 15 segundos atingido ao buscar usuário do Supabase');
+          console.warn('[AUTH] profile failed (timeout)');
           resolve(null);
-        }, 5000);
+        }, 15000);
       })
     ]);
   },
@@ -512,26 +515,68 @@ export const supabaseService = {
     }
   },
 
-  subscribeToAuth(callback: (user: Profile | null) => void) {
+  subscribeToAuth(callback: (authUser: any | null, profile: Profile | null, event: string | null) => void) {
     if (isDemoMode) {
-      return subscribeLocalEvent('auth_change', callback);
+      return subscribeLocalEvent('auth_change', (prof) => {
+        if (prof) {
+          callback(prof, prof, 'SIGNED_IN');
+        } else {
+          callback(null, null, 'SIGNED_OUT');
+        }
+      });
     }
 
     const { data: { subscription } } = supabase!.auth.onAuthStateChange(
       async (event, session) => {
         console.log('[AUTH] onAuthStateChange event fired:', event);
         try {
-          if (session?.user) {
+          const u = session?.user;
+          if (u) {
+            console.log('[AUTH] auth user valid, keeping session');
             const profile = await this.getCurrentUser();
-            callback(profile);
+            if (profile) {
+              callback(u, profile, event);
+            } else {
+              console.warn('[AUTH] profile failed, using fallback');
+              const fallbackRole = u.email === 'contato.fh3@gmail.com' ? 'admin' : 'passageiro';
+              const fallbackProfile: Profile = {
+                id: u.id,
+                email: u.email || '',
+                full_name: u.user_metadata?.full_name || u.user_metadata?.name || u.email?.split('@')[0] || 'Passageiro',
+                avatar_url: u.user_metadata?.avatar_url || null,
+                role: fallbackRole,
+                created_at: new Date().toISOString(),
+                updated_at: new Date().toISOString()
+              };
+              callback(u, fallbackProfile, event);
+            }
           } else {
             console.log('[AUTH] session loaded: null (logged out)');
-            callback(null);
+            if (event === 'SIGNED_OUT') {
+              console.error('[AUTH REDIRECT] event SIGNED_OUT, session null');
+              console.log('[AUTH] signed out, redirecting login');
+            }
+            callback(null, null, event);
           }
         } catch (authError) {
-          console.error('[AUTH] erro no listener do state change:', authError);
-          console.log('[AUTH] profile failed in subscription callback handler');
-          callback(null);
+          console.warn('[AUTH] erro no listener do state change (warning):', authError);
+          const u = session?.user;
+          if (u) {
+            console.warn('[AUTH] profile failed, using fallback');
+            const fallbackRole = u.email === 'contato.fh3@gmail.com' ? 'admin' : 'passageiro';
+            const fallbackProfile: Profile = {
+              id: u.id,
+              email: u.email || '',
+              full_name: u.user_metadata?.full_name || u.user_metadata?.name || u.email?.split('@')[0] || 'Passageiro',
+              avatar_url: u.user_metadata?.avatar_url || null,
+              role: fallbackRole,
+              created_at: new Date().toISOString(),
+              updated_at: new Date().toISOString()
+            };
+            callback(u, fallbackProfile, event);
+          } else {
+            callback(null, null, event);
+          }
         }
       }
     );
@@ -548,6 +593,7 @@ export const supabaseService = {
     }
 
     try {
+      console.log('[SUPABASE QUERY]', 'driver_status');
       const { data, error } = await supabase!
         .from('driver_status')
         .select('*')
@@ -584,6 +630,7 @@ export const supabaseService = {
 
     try {
       // Buscar se já existe registro com aquele driverId
+      console.log('[SUPABASE QUERY]', 'driver_status');
       const { data: existing } = await supabase!
         .from('driver_status')
         .select('id')
@@ -592,11 +639,13 @@ export const supabaseService = {
 
       let query;
       if (existing) {
+        console.log('[SUPABASE QUERY]', 'driver_status');
         query = supabase!
           .from('driver_status')
           .update({ status, updated_at })
           .eq('driver_id', adminUserId);
       } else {
+        console.log('[SUPABASE QUERY]', 'driver_status');
         query = supabase!
           .from('driver_status')
           .insert({ driver_id: adminUserId, status, updated_at });
@@ -733,6 +782,7 @@ export const supabaseService = {
         price_breakdown: data.price_breakdown || null
       };
 
+      console.log('[SUPABASE QUERY]', 'ride_requests');
       const { data: inserted, error } = await supabase!
         .from('ride_requests')
         .insert(dbRide)
@@ -774,9 +824,10 @@ export const supabaseService = {
 
     try {
       // Usar join em profiles e drivers utilizando a relação de passenger_id para evitar incompatibilidades
+      console.log('[SUPABASE QUERY]', 'ride_requests');
       let query = supabase!
         .from('ride_requests')
-        .select('*, profiles:passenger_id(*), drivers:driver_id(*)');
+        .select('*, profiles:profiles!passenger_id(*), drivers:drivers!driver_id(*)');
 
       if (userRole !== 'admin') {
         query = query.eq('passenger_id', userId);
@@ -808,9 +859,10 @@ export const supabaseService = {
     }
 
     try {
+      console.log('[SUPABASE QUERY]', 'ride_requests');
       const { data, error } = await supabase!
         .from('ride_requests')
-        .select('*, profiles:passenger_id(*), drivers:driver_id(*)')
+        .select('*, profiles:profiles!passenger_id(*), drivers:drivers!driver_id(*)')
         .eq('id', id)
         .maybeSingle();
 
@@ -865,6 +917,7 @@ export const supabaseService = {
         updatePayload.rejection_reason = updates.rejection_reason;
       }
 
+      console.log('[SUPABASE QUERY]', 'ride_requests');
       const { error } = await supabase!
         .from('ride_requests')
         .update(updatePayload)
@@ -938,9 +991,10 @@ export const supabaseService = {
         .sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime());
     }
 
+    console.log('[SUPABASE QUERY]', 'ride_messages');
     const { data, error } = await supabase!
       .from('ride_messages')
-      .select('*, profiles:sender_id(*)')
+      .select('*, profiles:profiles!sender_id(*)')
       .eq('ride_id', rideId)
       .order('created_at', { ascending: true });
 
@@ -968,6 +1022,7 @@ export const supabaseService = {
       return newMessage;
     }
 
+    console.log('[SUPABASE QUERY]', 'ride_messages');
     const { data: inserted, error } = await supabase!
       .from('ride_messages')
       .insert({
@@ -1003,6 +1058,7 @@ export const supabaseService = {
         async (payload) => {
           // Buscar info do remetente
           const senderId = payload.new.sender_id;
+          console.log('[SUPABASE QUERY]', 'profiles');
           const { data: profile } = await supabase!
             .from('profiles')
             .select('*')
@@ -1034,6 +1090,7 @@ export const supabaseService = {
       return JSON.parse(driversStr);
     }
     try {
+      console.log('[SUPABASE QUERY]', 'drivers');
       const { data, error } = await supabase!
         .from('drivers')
         .select('*');
@@ -1055,6 +1112,7 @@ export const supabaseService = {
       return settingsList.find(s => s.driver_id === driverId) || null;
     }
     try {
+      console.log('[SUPABASE QUERY]', 'driver_settings');
       const { data, error } = await supabase!
         .from('driver_settings')
         .select('*')
@@ -1107,6 +1165,7 @@ export const supabaseService = {
       return true;
     }
     try {
+      console.log('[SUPABASE QUERY]', 'driver_settings');
       const { data: existing } = await supabase!
         .from('driver_settings')
         .select('id')
@@ -1116,11 +1175,13 @@ export const supabaseService = {
       let query;
       const updated_at = new Date().toISOString();
       if (existing) {
+        console.log('[SUPABASE QUERY]', 'driver_settings');
         query = supabase!
           .from('driver_settings')
           .update({ ...settings, updated_at })
           .eq('driver_id', driverId);
       } else {
+        console.log('[SUPABASE QUERY]', 'driver_settings');
         query = supabase!
           .from('driver_settings')
           .insert({
@@ -1156,6 +1217,7 @@ export const supabaseService = {
       return false;
     }
     try {
+      console.log('[SUPABASE QUERY]', 'drivers');
       const { error } = await supabase!
         .from('drivers')
         .update({

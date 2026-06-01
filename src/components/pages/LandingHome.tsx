@@ -63,6 +63,7 @@ export function LandingHome({ currentUser, onRefreshUser }: HomeProps) {
   const handleSignOut = async () => {
     await supabaseService.signOut();
     onRefreshUser();
+    console.error('[AUTH REDIRECT]', 'Usuário clicou em Sair da Conta a partir de LandingHome.');
     navigate('/login');
   };
 
